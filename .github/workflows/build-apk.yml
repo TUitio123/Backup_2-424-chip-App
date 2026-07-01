@@ -1,0 +1,292 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Node.js 22 ────────────────────────────────────────────────────────
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ── 3. Capacitor CLI (aus package.json, kein separates global install nötig)
+      - name: Install Capacitor CLI globally
+        run: npm install -g @capacitor/cli
+
+      # ── 4. Project dependencies ───────────────────────────────────────────────
+      - name: Install project dependencies
+        run: npm install
+        env:
+          NODE_ENV: development
+
+      # ── 5. Build web app ──────────────────────────────────────────────────────
+      - name: Build web app
+        run: npx vite build
+
+      # ── 6. Add Android platform ───────────────────────────────────────────────
+      - name: Add Capacitor Android platform
+        run: cap add android
+
+      # ── 7. Sync web assets ────────────────────────────────────────────────────
+      - name: Sync Capacitor
+        run: cap sync android
+
+      # ── 8. Write MainActivity.java ────────────────────────────────────────────
+      - name: Write MainActivity.java with NFC support
+        run: |
+          cat > android/app/src/main/java/com/ntag424scanner/app/MainActivity.java << 'JAVA'
+          package com.ntag424scanner.app;
+
+          import android.app.PendingIntent;
+          import android.content.Intent;
+          import android.nfc.NfcAdapter;
+          import android.nfc.Tag;
+          import android.os.Bundle;
+
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+
+              private Ntag424Plugin nfcPlugin;
+              private NfcAdapter nfcAdapter;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(Ntag424Plugin.class);
+                  super.onCreate(savedInstanceState);
+                  nfcAdapter = NfcAdapter.getDefaultAdapter(this);
+                  nfcPlugin = (Ntag424Plugin) getBridge().getPlugin("Ntag424").getInstance();
+              }
+
+              @Override
+              public void onResume() {
+                  super.onResume();
+                  if (nfcAdapter != null && nfcAdapter.isEnabled()) {
+                      PendingIntent pendingIntent = PendingIntent.getActivity(
+                          this, 0,
+                          new Intent(this, getClass()).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                          PendingIntent.FLAG_MUTABLE
+                      );
+                      nfcAdapter.enableForegroundDispatch(this, pendingIntent, null, null);
+                  }
+              }
+
+              @Override
+              public void onPause() {
+                  super.onPause();
+                  if (nfcAdapter != null) {
+                      nfcAdapter.disableForegroundDispatch(this);
+                  }
+              }
+
+              @Override
+              public void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  Tag tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
+                  if (tag != null && nfcPlugin != null) {
+                      nfcPlugin.handleTag(tag);
+                  }
+              }
+          }
+          JAVA
+
+      # ── 9. Write Ntag424Plugin.java ───────────────────────────────────────────
+      - name: Write Ntag424Plugin.java
+        run: |
+          cat > android/app/src/main/java/com/ntag424scanner/app/Ntag424Plugin.java << 'JAVA'
+          package com.ntag424scanner.app;
+
+          import android.nfc.Tag;
+          import android.nfc.tech.IsoDep;
+          import android.util.Log;
+
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          import java.util.Arrays;
+
+          @CapacitorPlugin(name = "Ntag424")
+          public class Ntag424Plugin extends Plugin {
+
+              private static final String TAG = "Ntag424Plugin";
+              private boolean scanning = false;
+
+              private static final byte[] DF_NAME = {
+                  (byte)0xD2,(byte)0x76,(byte)0x00,(byte)0x00,(byte)0x85,(byte)0x01,(byte)0x01
+              };
+
+              @PluginMethod
+              public void startScan(PluginCall call) {
+                  android.nfc.NfcAdapter a = android.nfc.NfcAdapter.getDefaultAdapter(getContext());
+                  if (a == null || !a.isEnabled()) { call.reject("NFC nicht verfuegbar"); return; }
+                  scanning = true;
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void stopScan(PluginCall call) {
+                  scanning = false;
+                  call.resolve();
+              }
+
+              public void handleTag(Tag tag) {
+                  if (!scanning) return;
+
+                  String uid = toHex(tag.getId()).toUpperCase();
+                  IsoDep iso = IsoDep.get(tag);
+
+                  if (iso == null) {
+                      emitResult(uid, "UNKNOWN", "NO_ISODEP");
+                      return;
+                  }
+
+                  new Thread(() -> {
+                      try {
+                          iso.connect();
+                          iso.setTimeout(5000);
+                          String tamperStatus = readTamperStatus(iso, uid);
+                          emitResult(uid, tamperStatus, "OK");
+                      } catch (Exception e) {
+                          Log.e(TAG, "handleTag error: " + e.getMessage());
+                          emitResult(uid, "UNKNOWN", "ERR:" + e.getMessage());
+                      } finally {
+                          try { iso.close(); } catch (Exception ignored) {}
+                      }
+                  }).start();
+              }
+
+              private String readTamperStatus(IsoDep iso, String uid) throws Exception {
+                  // 1. SELECT Application
+                  byte[] selApdu = new byte[5 + DF_NAME.length + 1];
+                  selApdu[0]=0x00; selApdu[1]=(byte)0xA4; selApdu[2]=0x04;
+                  selApdu[3]=0x00; selApdu[4]=(byte)DF_NAME.length;
+                  System.arraycopy(DF_NAME, 0, selApdu, 5, DF_NAME.length);
+                  selApdu[selApdu.length-1]=0x00;
+                  byte[] selResp = iso.transceive(selApdu);
+                  Log.d(TAG, uid + " SEL=" + toHex(selResp));
+                  if (!isISO9000(selResp)) return "SELECT_FAILED";
+
+                  // 2. GetTTStatus (no auth — works on factory default chips)
+                  byte[] ttCmd = {(byte)0x90,(byte)0xF7,0x00,0x00,0x00};
+                  byte[] ttResp = iso.transceive(ttCmd);
+                  Log.i(TAG, uid + " TTSTATUS=" + toHex(ttResp));
+
+                  if (ttResp == null || ttResp.length < 4) return "UNKNOWN";
+
+                  int sw1 = ttResp[ttResp.length-2] & 0xFF;
+                  int sw2 = ttResp[ttResp.length-1] & 0xFF;
+
+                  if (sw1 == 0x91 && sw2 == 0x00) {
+                      char b0 = (char)(ttResp[0] & 0xFF);
+                      char b1 = (char)(ttResp[1] & 0xFF);
+                      return "" + b0 + b1; // CC, OC, OO, or II
+                  }
+                  if (sw1 == 0x91 && sw2 == 0xAD) return "AUTH_REQUIRED";
+                  if (sw1 == 0x91 && sw2 == 0x1C) return "II";
+                  return String.format("SW_%02X%02X", sw1, sw2);
+              }
+
+              private static boolean isISO9000(byte[] r) {
+                  return r != null && r.length >= 2
+                      && r[r.length-2] == (byte)0x90 && r[r.length-1] == (byte)0x00;
+              }
+
+              private static String toHex(byte[] b) {
+                  if (b == null) return "null";
+                  StringBuilder sb = new StringBuilder();
+                  for (byte x : b) sb.append(String.format("%02X", x));
+                  return sb.toString();
+              }
+
+              private void emitResult(String uid, String tamperStatus, String debug) {
+                  JSObject r = new JSObject();
+                  r.put("uid", uid);
+                  r.put("tamperStatus", tamperStatus);
+                  r.put("debug", debug);
+                  notifyListeners("tagRead", r);
+                  Log.i(TAG, "EMIT uid=" + uid + " status=" + tamperStatus);
+              }
+          }
+          JAVA
+
+      # ── 10. Patch AndroidManifest.xml ─────────────────────────────────────────
+      - name: Patch AndroidManifest.xml for NFC
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          sed -i '/<manifest /a\    <uses-permission android:name="android.permission.NFC" />\n    <uses-feature android:name="android.hardware.nfc" android:required="true" />' "$MANIFEST"
+          sed -i 's|</activity>|        <intent-filter>\n                <action android:name="android.nfc.action.TECH_DISCOVERED" />\n            </intent-filter>\n            <meta-data android:name="android.nfc.action.TECH_DISCOVERED" android:resource="@xml/nfc_tech_filter" />\n        </activity>|' "$MANIFEST"
+          echo "--- Manifest ---"
+          cat "$MANIFEST"
+
+      # ── 11. Write nfc_tech_filter.xml ─────────────────────────────────────────
+      - name: Write nfc_tech_filter.xml
+        run: |
+          mkdir -p android/app/src/main/res/xml
+          cat > android/app/src/main/res/xml/nfc_tech_filter.xml << 'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <tech-list>
+                  <tech>android.nfc.tech.IsoDep</tech>
+              </tech-list>
+              <tech-list>
+                  <tech>android.nfc.tech.NfcA</tech>
+              </tech-list>
+          </resources>
+          XML
+
+      # ── 12. Java 21 ───────────────────────────────────────────────────────────
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # ── 13. Android SDK ───────────────────────────────────────────────────────
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      # ── 14. Build APK ─────────────────────────────────────────────────────────
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      # ── 15. Upload APK ────────────────────────────────────────────────────────
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ntag424-scanner-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      - name: Build summary
+        run: |
+          echo "## APK gebaut!" >> $GITHUB_STEP_SUMMARY
+          echo "Download unter **Artifacts → ntag424-scanner-debug**" >> $GITHUB_STEP_SUMMARY
