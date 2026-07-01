@@ -33,7 +33,7 @@ jobs:
 
       # ── 5. chips.json → chipRegistry.ts generieren ───────────────────────────
       - name: Generate chipRegistry.ts from chips.json
-        run: node scripts/generate-registry.js
+        run: node scripts/generate-registry.cjs
 
       # ── 6. Build web app ──────────────────────────────────────────────────────
       - name: Build web app
