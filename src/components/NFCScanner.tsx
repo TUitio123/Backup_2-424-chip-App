@@ -18,19 +18,18 @@ import { Button } from '@/components/ui/button';
 // ─── Verification result type ─────────────────────────────────────────────────
 
 type VerifyResult =
-  | { kind: 'verified';       chip: ChipEntry }
-  | { kind: 'tampered_known'; chip: ChipEntry }
-  | { kind: 'unknown' };
+  | { kind: 'verified'; chip: ChipEntry }   // UID bekannt + Tamper = CC → grün
+  | { kind: 'warn';     chip: ChipEntry }   // UID bekannt + Tamper ≠ CC → orange Warnung
+  | { kind: 'unknown' };                    // UID nicht in Registry → rot
 
-function classify(
-  scan: ScanResult,
-): VerifyResult {
+function classify(scan: ScanResult): VerifyResult {
   const chip = lookupChip(scan.uid);
   if (!chip) return { kind: 'unknown' };
-  const tamperOk = scan.tamperStatus === 'CC' || scan.tamperStatus === 'II';
-  return tamperOk
+  // Nur CC (Draht intakt + abgefragt) = wirklich OK
+  // II, OO, OC, AUTH_REQUIRED, UNKNOWN → alle orange Warnung
+  return scan.tamperStatus === 'CC'
     ? { kind: 'verified', chip }
-    : { kind: 'tampered_known', chip };
+    : { kind: 'warn', chip };
 }
 
 // ─── Tamper pill – immer klein angezeigt ──────────────────────────────────────
@@ -39,13 +38,12 @@ function TamperPill({ tamperStatus, verifyKind }: {
   tamperStatus: TamperStatus;
   verifyKind: VerifyResult['kind'];
 }) {
-  const isOk      = tamperStatus === 'CC' || tamperStatus === 'II';
-  const isBroken  = !isOk;
+  const isGreen = tamperStatus === 'CC';
 
   const color =
-    verifyKind === 'verified'       ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25' :
-    verifyKind === 'tampered_known' ? 'bg-amber-500/15 text-amber-300 border-amber-500/25'       :
-                                      'bg-slate-700/60 text-slate-400 border-slate-600';
+    verifyKind === 'verified' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25' :
+    verifyKind === 'warn'     ? 'bg-orange-500/15 text-orange-300 border-orange-500/25'    :
+                                'bg-slate-700/60 text-slate-400 border-slate-600';
 
   return (
     <div className={cn(
@@ -54,10 +52,10 @@ function TamperPill({ tamperStatus, verifyKind }: {
     )}>
       <span className={cn(
         'w-1.5 h-1.5 rounded-full flex-shrink-0',
-        isOk ? 'bg-emerald-400' : 'bg-amber-400',
+        isGreen ? 'bg-emerald-400' : 'bg-orange-400',
       )} />
       <span>Tamper: <span className="font-bold">{tamperStatus}</span></span>
-      {isBroken && <AlertTriangle className="w-3 h-3 opacity-80" />}
+      {!isGreen && <AlertTriangle className="w-3 h-3 opacity-80" />}
     </div>
   );
 }
@@ -95,27 +93,35 @@ function VerifyBadge({ verify, scan }: {
     );
   }
 
-  if (verify.kind === 'tampered_known') {
+  if (verify.kind === 'warn') {
+    // Beschreibung je nach konkretem Tamper-Status
+    const warnText =
+      scan.tamperStatus === 'OO' ? 'Tamper-Draht gebrochen – Chip wurde geöffnet.' :
+      scan.tamperStatus === 'OC' ? 'Chip war geöffnet, Draht scheint jetzt wieder geschlossen.' :
+      scan.tamperStatus === 'II' ? 'Tamper-Feature nicht aktiviert – kein Draht konfiguriert.' :
+      scan.tamperStatus === 'AUTH_REQUIRED' ? 'Tamper-Status konnte nicht gelesen werden (Auth erforderlich).' :
+      `Tamper-Status unklar (${scan.tamperStatus}).`;
+
     return (
       <div className="flex flex-col items-center gap-3 py-6">
-        <div className="w-28 h-28 rounded-full bg-amber-500/15 border-4 border-amber-500/50 flex items-center justify-center shadow-[0_0_40px_rgba(245,158,11,0.2)]">
-          <XCircle className="w-16 h-16 text-amber-400" />
+        <div className="w-28 h-28 rounded-full bg-orange-500/15 border-4 border-orange-500/50 flex items-center justify-center shadow-[0_0_40px_rgba(249,115,22,0.2)]">
+          <AlertTriangle className="w-16 h-16 text-orange-400" />
         </div>
         <div className="text-center">
-          <div className="text-amber-400 font-bold text-sm uppercase tracking-widest mb-1">Chip bekannt</div>
+          <div className="text-orange-400 font-bold text-sm uppercase tracking-widest mb-1">Achtung</div>
           <div className="text-white font-extrabold text-4xl tracking-tight">{verify.chip.label}</div>
           {verify.chip.info && (
             <div className="text-slate-400 text-sm mt-1">{verify.chip.info}</div>
           )}
+          {verify.chip.issuedAt && (
+            <div className="text-slate-600 text-xs mt-0.5">Ausgegeben: {verify.chip.issuedAt}</div>
+          )}
         </div>
-        {/* Tamper pill */}
-        <TamperPill tamperStatus={scan.tamperStatus} verifyKind="tampered_known" />
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 text-center max-w-xs">
-          <AlertTriangle className="w-5 h-5 text-amber-400 mx-auto mb-1" />
-          <p className="text-amber-300 font-semibold text-sm">Chip kann schon entwertet sein</p>
-          <p className="text-amber-400/70 text-xs mt-0.5">
-            Tamper-Draht beschädigt ({scan.tamperStatus}). Chip wurde möglicherweise bereits verwendet.
-          </p>
+        <TamperPill tamperStatus={scan.tamperStatus} verifyKind="warn" />
+        <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl px-4 py-3 text-center max-w-xs">
+          <AlertTriangle className="w-5 h-5 text-orange-400 mx-auto mb-1" />
+          <p className="text-orange-300 font-semibold text-sm">Chip eventuell entwertet!</p>
+          <p className="text-orange-400/70 text-xs mt-0.5">{warnText}</p>
         </div>
       </div>
     );
@@ -277,8 +283,8 @@ function HistoryItem({ scan, verify }: {
 }) {
   const [open, setOpen] = useState(false);
   const dot =
-    verify.kind === 'verified'       ? 'bg-emerald-400' :
-    verify.kind === 'tampered_known' ? 'bg-amber-400'   : 'bg-red-400';
+    verify.kind === 'verified' ? 'bg-emerald-400' :
+    verify.kind === 'warn'     ? 'bg-orange-400'  : 'bg-red-400';
   const label =
     verify.kind !== 'unknown' ? verify.chip.label : 'Unbekannt';
 
@@ -429,9 +435,9 @@ export function NFCScanner() {
 
           {/* Big verify badge */}
           <Card className={cn('border overflow-hidden',
-            currentVerify.kind === 'verified'       && 'border-emerald-500/30 bg-emerald-500/5',
-            currentVerify.kind === 'tampered_known' && 'border-amber-500/30 bg-amber-500/5',
-            currentVerify.kind === 'unknown'        && 'border-red-500/20 bg-red-500/5',
+            currentVerify.kind === 'verified' && 'border-emerald-500/30 bg-emerald-500/5',
+            currentVerify.kind === 'warn'     && 'border-orange-500/30 bg-orange-500/5',
+            currentVerify.kind === 'unknown'  && 'border-red-500/20 bg-red-500/5',
           )}>
             <CardContent className="p-0">
               <VerifyBadge verify={currentVerify} scan={lastScan} />
@@ -441,8 +447,8 @@ export function NFCScanner() {
           {/* UID row */}
           <UIDRow uid={lastScan.uid} />
 
-          {/* Tamper detail – nur bei tampered/unknown als extra Grid */}
-          {(currentVerify.kind === 'tampered_known' || currentVerify.kind === 'unknown') && (
+          {/* Tamper detail – nur bei warn/unknown als extra Grid */}
+          {(currentVerify.kind === 'warn' || currentVerify.kind === 'unknown') && (
             <div className="grid grid-cols-2 gap-2">
               <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
                 <div className="text-slate-500 text-xs mb-0.5">Tamper-Status</div>
@@ -457,7 +463,7 @@ export function NFCScanner() {
             </div>
           )}
 
-          {/* Raw data panel */}
+          {/* Raw data panel – bei warn und unknown */}
           {currentVerify.kind !== 'verified' && (
             <RawDataPanel scan={lastScan} verify={currentVerify} onSend={handleSend} />
           )}
