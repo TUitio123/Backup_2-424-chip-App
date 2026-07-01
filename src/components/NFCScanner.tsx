@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Wifi, WifiOff, CheckCircle, XCircle, AlertTriangle,
   RefreshCw, Copy, ChevronDown, ChevronUp, Zap,
-  Send, ShieldAlert, HelpCircle, Loader2,
+  Send, ShieldAlert, HelpCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   ScanResult, ScanStatus, TamperStatus,
   isNativeAvailable, startNativeScan, stopNativeScan,
 } from '@/lib/ntag424';
-import { useChipRegistry, lookupChip, ChipEntry } from '@/hooks/useChipRegistry';
+import { lookupChip, ChipEntry } from '@/lib/chipRegistry';
 import { useToast } from '@/hooks/useToast';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -24,9 +24,8 @@ type VerifyResult =
 
 function classify(
   scan: ScanResult,
-  registry: ChipEntry[] | undefined
 ): VerifyResult {
-  const chip = lookupChip(scan.uid, registry);
+  const chip = lookupChip(scan.uid);
   if (!chip) return { kind: 'unknown' };
   const tamperOk = scan.tamperStatus === 'CC' || scan.tamperStatus === 'II';
   return tamperOk
@@ -327,7 +326,6 @@ export function NFCScanner() {
   const { toast } = useToast();
 
   const native = isNativeAvailable();
-  const { data: registry, isLoading: registryLoading, error: registryError } = useChipRegistry();
 
   useEffect(() => () => { stopNativeScan(); }, []);
 
@@ -345,10 +343,10 @@ export function NFCScanner() {
 
   useEffect(() => {
     if (lastScan) {
-      const verify = classify(lastScan, registry);
+      const verify = classify(lastScan);
       setHistory(h => [{ scan: lastScan, verify }, ...h].slice(0, 20));
     }
-  }, [lastScan, registry]);
+  }, [lastScan]);
 
   const startScan = useCallback(async () => {
     setScanStatus('scanning');
@@ -375,24 +373,10 @@ export function NFCScanner() {
     console.log('[NFCScanner] send payload:', payload);
   };
 
-  const currentVerify = lastScan ? classify(lastScan, registry) : null;
+  const currentVerify = lastScan ? classify(lastScan) : null;
 
   return (
     <div className="w-full max-w-md mx-auto space-y-5">
-
-      {/* Registry status */}
-      {registryLoading && (
-        <div className="flex items-center justify-center gap-2 text-slate-500 text-xs">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          Chip-Registry wird geladen…
-        </div>
-      )}
-      {registryError && (
-        <div className="flex items-center justify-center gap-2 text-amber-500/70 text-xs">
-          <AlertTriangle className="w-3 h-3" />
-          Registry nicht erreichbar – Offline-Modus
-        </div>
-      )}
 
       {/* Mode badge */}
       <div className="flex justify-center">
