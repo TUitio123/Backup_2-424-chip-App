@@ -1,28 +1,26 @@
 /**
  * useChipRegistry
  *
- * Loads chips.json from the GitHub repository (raw URL).
- * The file lives at the root of the repo and is fetched fresh on each app start.
+ * Lädt chips.json direkt aus dem Build-Bundle (statischer Import).
+ * Kein Netzwerkaufruf nötig – funktioniert auch ohne Internet und in privaten Repos.
+ *
+ * Um Chips hinzuzufügen/entfernen: chips.json im Root bearbeiten, dann neu bauen.
  *
  * chips.json format:
  * [
  *   {
- *     "uid":      "04:C1:68:5A:BF:1D:90",  // colon-separated hex, uppercase
- *     "label":    "10.000 sats",             // shown large after scan
- *     "info":     "Ausgabe 2026-01",         // optional detail line
- *     "issuedAt": "01.07.2026"               // optional date string (DD.MM.YYYY)
+ *     "uid":      "04C1685ABF1D90",    // hex, ohne Doppelpunkte
+ *     "label":    "10.000 sats",        // wird groß angezeigt
+ *     "info":     "",                   // optional
+ *     "issuedAt": "01.07.2026"          // optional (DD.MM.YYYY)
  *   }
  * ]
  *
- * UID matching is case-insensitive and ignores colons/spaces so that
- * "04:C1:68:5A:BF:1D:90", "04C1685ABF1D90", "04 C1 68 5A BF 1D 90"
- * all match each other.
+ * UID-Matching ist case-insensitiv, Doppelpunkte/Leerzeichen werden ignoriert.
  */
 
 import { useQuery } from '@tanstack/react-query';
-
-const CHIPS_URL =
-  'https://raw.githubusercontent.com/TUitio123/ntag424-tt-scanner-v2/main/chips.json';
+import chipsData from '../../chips.json';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,14 +43,9 @@ export function useChipRegistry() {
   return useQuery<ChipEntry[]>({
     queryKey: ['chip-registry'],
     queryFn: async () => {
-      const res = await fetch(CHIPS_URL);
-      if (!res.ok) throw new Error(`chips.json: HTTP ${res.status}`);
-      const data = await res.json();
-      if (!Array.isArray(data)) throw new Error('chips.json: expected array');
-      return data as ChipEntry[];
+      return chipsData as ChipEntry[];
     },
-    staleTime: 5 * 60 * 1000,
-    retry: 2,
+    staleTime: Infinity,
   });
 }
 
