@@ -220,8 +220,9 @@ function UIDRow({ uid }: { uid: string }) {
 
 // ─── Scan button ──────────────────────────────────────────────────────────────
 
-function ScanButton({ status, onScan, onStop }: {
+function ScanButton({ status, hasResult, onScan, onStop }: {
   status: ScanStatus;
+  hasResult: boolean;
   onScan: () => void;
   onStop: () => void;
 }) {
@@ -235,7 +236,6 @@ function ScanButton({ status, onScan, onStop }: {
         'focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-500',
         status === 'idle'        && 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/30 hover:border-blue-400 active:scale-95 cursor-pointer',
         scanning                 && 'bg-blue-600/30 border-blue-400 animate-pulse cursor-pointer',
-        status === 'success'     && 'bg-emerald-600/20 border-emerald-500/50 hover:bg-emerald-600/30 cursor-pointer',
         status === 'error'       && 'bg-red-600/20 border-red-500/50 hover:bg-red-600/30 cursor-pointer',
         status === 'unsupported' && 'bg-slate-800/50 border-slate-700 cursor-not-allowed opacity-50',
       )}
@@ -247,9 +247,8 @@ function ScanButton({ status, onScan, onStop }: {
         </>
       )}
       <div className="relative z-10">
-        {status === 'success'     && <CheckCircle className="w-12 h-12 text-emerald-400" />}
-        {status === 'error'       && <XCircle     className="w-12 h-12 text-red-400" />}
-        {status === 'unsupported' && <WifiOff     className="w-12 h-12 text-slate-500" />}
+        {status === 'error'       && <XCircle className="w-12 h-12 text-red-400" />}
+        {status === 'unsupported' && <WifiOff className="w-12 h-12 text-slate-500" />}
         {(status === 'idle' || scanning) && (
           <Wifi className={cn('w-12 h-12', scanning ? 'text-blue-300' : 'text-blue-400')} />
         )}
@@ -257,13 +256,12 @@ function ScanButton({ status, onScan, onStop }: {
       <span className={cn('relative z-10 text-xs font-bold tracking-widest uppercase',
         status === 'idle'        && 'text-blue-300',
         scanning                 && 'text-blue-200',
-        status === 'success'     && 'text-emerald-300',
         status === 'error'       && 'text-red-300',
         status === 'unsupported' && 'text-slate-500',
       )}>
-        {status === 'idle'        && 'Scannen'}
-        {scanning                 && 'Warte…'}
-        {status === 'success'     && 'Erneut'}
+        {status === 'idle'   && 'Scannen'}
+        {scanning && !hasResult && 'Warte…'}
+        {scanning && hasResult  && 'Scannt…'}
         {status === 'error'       && 'Retry'}
         {status === 'unsupported' && 'N/A'}
       </span>
@@ -331,7 +329,7 @@ export function NFCScanner() {
 
   const handleResult = useCallback((result: ScanResult) => {
     setLastScan(result);
-    setScanStatus('success');
+    setScanStatus('scanning'); // bleibt scanning – NFC lauscht weiter auf den nächsten Tag
     setErrorMsg(null);
   }, []);
 
@@ -395,7 +393,7 @@ export function NFCScanner() {
 
       {/* Scan button */}
       <div className="flex justify-center py-2">
-        <ScanButton status={scanStatus} onScan={startScan} onStop={stopScan} />
+        <ScanButton status={scanStatus} hasResult={lastScan !== null} onScan={startScan} onStop={stopScan} />
       </div>
 
       {/* Hint */}
@@ -404,9 +402,14 @@ export function NFCScanner() {
           NTAG 424 TT Tag an die Rückseite halten
         </p>
       )}
-      {scanStatus === 'scanning' && (
+      {scanStatus === 'scanning' && !lastScan && (
         <p className="text-center text-blue-300 text-sm animate-pulse">
           Halte den Tag an dein Gerät…
+        </p>
+      )}
+      {scanStatus === 'scanning' && lastScan && (
+        <p className="text-center text-blue-400/70 text-xs">
+          Bereit für nächsten Tag · Stopp zum Beenden
         </p>
       )}
 
@@ -460,7 +463,7 @@ export function NFCScanner() {
           )}
 
           <p className="text-center text-slate-600 text-xs">
-            Neuen Tag scannen → Scan-Button drücken
+            Nächsten Tag einfach ranhalten
           </p>
         </div>
       )}
