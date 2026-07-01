@@ -31,7 +31,44 @@ jobs:
         env:
           NODE_ENV: development
 
-      # ── 5. Build web app ──────────────────────────────────────────────────────
+      # ── 5. chips.json → chipRegistry.ts generieren ───────────────────────────
+      - name: Generate chipRegistry.ts from chips.json
+        run: |
+          node -e "
+          const fs = require('fs');
+          const chips = JSON.parse(fs.readFileSync('chips.json', 'utf8'));
+          const entries = chips.map(c => \`  {
+            uid: '\${c.uid}',
+            label: '\${c.label}',
+            info: '\${c.info || ''}',
+            issuedAt: '\${c.issuedAt || ''}',
+          }\`).join(',\n');
+          const ts = \`// AUTO-GENERATED from chips.json — do not edit manually
+export interface ChipEntry {
+  uid: string;
+  label: string;
+  info?: string;
+  issuedAt?: string;
+}
+
+export const CHIP_REGISTRY: ChipEntry[] = [
+\${entries}
+];
+
+export function normalizeUID(uid: string): string {
+  return uid.replace(/[:\\\\ \\\\-]/g, '').toUpperCase();
+}
+
+export function lookupChip(uid: string): ChipEntry | null {
+  const needle = normalizeUID(uid);
+  return CHIP_REGISTRY.find(e => normalizeUID(e.uid) === needle) ?? null;
+}
+\`;
+          fs.writeFileSync('src/lib/chipRegistry.ts', ts);
+          console.log('chipRegistry.ts generated with ' + chips.length + ' chips');
+          "
+
+      # ── 6. Build web app ──────────────────────────────────────────────────────
       - name: Build web app
         run: npx vite build
 
