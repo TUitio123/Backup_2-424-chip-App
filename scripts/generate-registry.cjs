@@ -55,6 +55,9 @@ export const KIND_VERIFY_LOG = 6129;
 /** Kind 3491 – Aufladen-Anfrage (published by app on "Aufladen") */
 export const KIND_RELOAD_REQUEST = 3491;
 
+/** Kind 3492 – Entwertungs-Anfrage (published by app on "Entwertung beantragen") */
+export const KIND_INVALIDATE_REQUEST = 3492;
+
 /** Shared app-tag for relay-level filtering */
 export const APP_TAG = 'bitcoin-note-verifier';
 `;
