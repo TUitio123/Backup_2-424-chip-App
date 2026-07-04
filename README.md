@@ -1,6 +1,73 @@
-# NTAG 424 TT Scanner
+# NTAG 424 TT Scanner — Android-App
 
-Android-APK zum Scannen von NXP NTAG 424 DNA TagTamper NFC-Chips. Liest UID und Tamper-Status direkt vom Chip via ISO-DEP APDU. Gebaut mit React + Capacitor.
+Android-App zum Scannen von physischen Bitcoin-Scheinen. Liest NXP NTAG 424 DNA TagTamper NFC-Chips via ISO-DEP APDU, prüft den Tamper-Status und kann Verifikationsergebnisse über das Nostr-Protokoll öffentlich protokollieren.
+
+**Primäres Repository:** https://github.com/TUitio123/ntag424-tt-scanner-v2 (privat)  
+**Dieses Repository:** Backup-Kopie, identischer Stand, nichts verändert.  
+**Zugehörige Website:** https://Testtest123.shakespeare.wtf
+
+---
+
+## Was die App macht
+
+1. **NFC-Chip scannen** — Nutzer hält das Android-Gerät an einen physischen Bitcoin-Schein. Die App liest via IsoDep (ISO 14443-4) die UID und den Tamper-Status des eingebetteten NTAG 424 TT Chips.
+
+2. **Chip verifizieren** — Die UID wird gegen die eingebettete Chip-Registry (`chipRegistry.ts`) geprüft. Bekannte Chips zeigen Satoshi-Betrag und Tamper-Zustand. Unbekannte Chips werden als rot markiert.
+
+3. **Online verifizieren** — Sendet ein Nostr-Event (Kind 6129) mit UID, Betrag, Tamper-Status und Ergebnis an öffentliche Relays. Erscheint sofort auf der Website im Verifikations-Protokoll.
+
+4. **Aufladen** — Sendet ein Nostr-Event (Kind 3491) als Signal, dass der Schein aufgeladen werden soll. Erscheint auf der Website als offene Anfrage.
+
+5. **Website anschauen** — Nach jedem erfolgreichen Online-Vorgang erscheint ein Button der direkt zur Verifikations-Website führt.
+
+---
+
+## APK herunterladen
+
+Die aktuelle APK wird automatisch bei jedem Push auf `main` via GitHub Actions gebaut.
+
+**Download:** GitHub → Actions → neuester erfolgreicher Run → Artifacts → `ntag424-scanner-debug`
+
+**Alternativ:** Die fertige APK liegt auf der Website unter https://Testtest123.shakespeare.wtf (direkter Download-Button).
+
+---
+
+## Registrierte Chips
+
+Diese Chips sind in der aktuellen App-Version eingebettet:
+
+| # | UID | Betrag |
+|---|-----|--------|
+| 1 | `04C1685ABF1D90` | 11.000 sats |
+| 2 | `04AC695ABF1D90` | 11.500 sats |
+| 3 | `04C6695ABF1D90` | 12.000 sats |
+| 4 | `04BD695ABF1D90` | 12.500 sats |
+| 5 | `04AE695ABF1D90` | 13.000 sats |
+| 6 | `04AD695ABF1D90` | 13.500 sats |
+| 7 | `04BC695ABF1D90` | 14.000 sats |
+| 8 | `0493695ABF1D90` | 15.000 sats |
+
+Die Chip-Daten sind in zwei Stellen definiert (müssen synchron bleiben):
+- `chips.json` — menschenlesbare Quelldatei
+- `src/lib/chipRegistry.ts` — wird zur Build-Zeit aus `chips.json` generiert
+
+---
+
+## Technologie-Stack
+
+| Technologie | Version | Zweck |
+|---|---|---|
+| React | 19.x | UI-Framework |
+| TypeScript | 5.x | Typsicherheit |
+| TailwindCSS | 4.x | Styling (dark theme, slate-900) |
+| Vite | 8.x | Web-Build-Tool |
+| Capacitor | 8.4.x | Web→Native-Bridge (Android) |
+| shadcn/ui | — | UI-Komponenten |
+| Nostrify | 0.6.x | Nostr-Provider/Hooks |
+| nostr-tools | 2.x | Event-Signierung (finalizeEvent) |
+| TanStack Query | 5.x | State/Mutations |
+| Java | 21 | Android-Plugin (NFC APDU) |
+| Android SDK | 34 | Build-Target |
 
 ---
 
@@ -8,225 +75,262 @@ Android-APK zum Scannen von NXP NTAG 424 DNA TagTamper NFC-Chips. Liest UID und 
 
 ```
 ntag424-tt-scanner-v2/
+│
+├── chips.json                         ← Chip-Liste (Quelldatei, manuell pflegen)
+├── capacitor.config.ts                ← App-ID: com.ntag424scanner.app, webDir: dist
+│
+├── scripts/
+│   └── generate-registry.cjs         ← Node-Script: chips.json → chipRegistry.ts
+│
 ├── src/
+│   ├── pages/
+│   │   └── Index.tsx                  ← Haupt-Seite (Header + NFCScanner + Footer)
+│   │
 │   ├── components/
-│   │   └── NFCScanner.tsx        ← Haupt-UI-Komponente
+│   │   └── NFCScanner.tsx             ← HAUPT-KOMPONENTE — alles NFC-bezogene
+│   │
 │   ├── lib/
-│   │   ├── ntag424.ts            ← Capacitor-Bridge zum Java-Plugin
-│   │   └── chipRegistry.ts       ← Chip-Datenbank (direkt eingebettet)
-│   ├── hooks/
-│   │   └── useChipRegistry.ts    ← React-Hook für chipRegistry
-│   └── pages/
-│       └── Index.tsx             ← Hauptseite
-├── android-src/
-│   ├── MainActivity.java         ← NFC Foreground Dispatch
-│   └── Ntag424Plugin.java        ← Vollständiger Java-Plugin-Code (Referenz)
-├── chips.json                    ← Chip-Liste (Referenz, wird NICHT von der App geladen)
-├── capacitor.config.ts           ← Capacitor App-Konfiguration
+│   │   ├── chipRegistry.ts            ← AUTO-GENERIERT aus chips.json (nicht manuell editieren)
+│   │   ├── ntag424.ts                 ← Capacitor-Bridge zum Java-Plugin
+│   │   ├── appRelays.ts               ← Nostr-Standard-Relays
+│   │   └── utils.ts                   ← cn() helper
+│   │
+│   └── hooks/
+│       ├── usePublishAnonymous.ts     ← Nostr-Events ohne Login publizieren
+│       ├── useNostrPublish.ts         ← Standard-Hook (erfordert Login — NICHT für NFC verwendet)
+│       └── useCurrentUser.ts          ← Nostr-Login-Status
+│
+├── android-src/                       ← Referenz-Implementierung (NICHT direkt gebaut)
+│   ├── MainActivity.java              ← NFC Foreground Dispatch
+│   └── Ntag424Plugin.java             ← Vollständiger Java-Plugin-Code
+│
 └── .github/workflows/
-    └── build-apk.yml             ← GitHub Actions APK-Build
+    └── build-apk.yml                  ← GitHub Actions APK-Build (vollständig dokumentiert)
 ```
 
 ---
 
-## Chip-Datenbank verwalten
+## Build-Prozess (GitHub Actions)
 
-**WICHTIG:** Die App lädt die Chip-Liste **NICHT** aus `chips.json` zur Laufzeit. Die Daten sind direkt im TypeScript-Code eingebettet, damit die App offline und ohne Netzwerkzugriff funktioniert (das Repo ist privat, `raw.githubusercontent.com` unterstützt keine Tokens für private Repos).
+Der Build läuft automatisch bei jedem Push auf `main`. Die Datei `.github/workflows/build-apk.yml` führt folgende Schritte aus:
 
-### Chips hinzufügen oder entfernen
+| Schritt | Was passiert |
+|---|---|
+| 1. Checkout | Repository klonen |
+| 2. Node.js 22 | Node-Version einrichten |
+| 3. Capacitor CLI | `npm install -g @capacitor/cli` |
+| 4. npm install | Projektabhängigkeiten installieren |
+| 5. Registry generieren | `node scripts/generate-registry.cjs` — liest `chips.json`, schreibt `src/lib/chipRegistry.ts` |
+| 6. Web build | `npx vite build` → `dist/` |
+| 7. Android hinzufügen | `cap add android` — Android-Projektverzeichnis anlegen |
+| 8. Sync | `cap sync android` — Web-Assets ins Android-Projekt kopieren |
+| 9. MainActivity.java | Inline in Workflow geschrieben (NFC Foreground Dispatch) |
+| 10. Ntag424Plugin.java | Inline in Workflow geschrieben (APDU-Logik) |
+| 11. AndroidManifest patchen | NFC-Permission + Intent-Filter hinzufügen |
+| 12. nfc_tech_filter.xml | NFC-Tech-Filter-Datei schreiben |
+| 13. JDK 21 | Java 21 einrichten (NICHT 17 — Capacitor-Android-Anforderung) |
+| 14. Android SDK 34 | `android-actions/setup-android@v3` |
+| 15. Gradle build | `./gradlew assembleDebug` |
+| 16. Artifact hochladen | APK als `ntag424-scanner-debug` (30 Tage verfügbar) |
 
-Datei bearbeiten: **`src/lib/chipRegistry.ts`**
+**Wichtig:** Java 21 ist zwingend. Mit Java 17 schlägt der Gradle-Build fehl.
 
-```typescript
-export const CHIP_REGISTRY: ChipEntry[] = [
-  {
-    uid: '04C1685ABF1D90',   // UID ohne Doppelpunkte, ohne Leerzeichen
-    label: '10.000 sats',    // wird groß in der App angezeigt
-    info: '',                // optionale Infozeile (kann leer bleiben)
-    issuedAt: '01.07.2026',  // optionales Datum (deutsches Format DD.MM.YYYY)
-  },
-  // weitere Chips...
-];
-```
-
-**UID-Format:** Ohne Doppelpunkte eintragen, z.B. `04C1685ABF1D90` — nicht `04:C1:68:5A:BF:1D:90`. Das Matching ist case-insensitiv und ignoriert Doppelpunkte/Leerzeichen.
-
-Nach dem Bearbeiten: pushen → GitHub Actions baut automatisch eine neue APK.
-
-Die `chips.json` im Root ist nur als menschenlesbare Referenz gedacht und hat keinen Einfluss auf die App.
-
----
-
-## APK bauen
-
-Der Build läuft vollautomatisch via GitHub Actions bei jedem Push auf `main`.
-
-**Ablauf `.github/workflows/build-apk.yml`:**
-1. Node.js 22 + npm install
-2. `npx vite build` → erzeugt `dist/`
-3. `cap add android` → Android-Projekt anlegen
-4. `cap sync android` → Web-Assets in Android-Projekt kopieren
-5. `MainActivity.java` + `Ntag424Plugin.java` werden **inline in den Workflow geschrieben** (nicht aus dem Repo gelesen — das war so im Original-Repo gelöst)
-6. `AndroidManifest.xml` wird gepatch (NFC-Permission, Intent-Filter)
-7. `nfc_tech_filter.xml` wird geschrieben
-8. JDK **21** (nicht 17!) + Android SDK 34 einrichten
-9. `./gradlew assembleDebug`
-10. APK als Artifact hochladen (30 Tage aufbewahrt)
-
-**APK herunterladen:** GitHub → Actions → letzter erfolgreicher Run → Artifacts → `ntag424-scanner-debug`
-
-### Wichtige Erkenntnisse zum Build
-
-- **Java 21 ist zwingend erforderlich** (nicht Java 17). Capacitor-Android benötigt Java 21. Das war ein zentraler Bug im ursprünglichen Projekt.
-- `@capacitor/android`, `@capacitor/core` und `@capacitor/cli` müssen alle in `package.json` stehen.
-- `capacitor.config.ts` muss `appId: 'com.ntag424scanner.app'` und `webDir: 'dist'` haben.
-- Der Workflow schreibt MainActivity und Plugin-Code inline (via `cat > file << 'JAVA'`), weil Capacitor das Android-Projekt erst zur Build-Zeit anlegt.
+**Wichtig:** `MainActivity.java` und `Ntag424Plugin.java` werden inline im Workflow geschrieben, weil Capacitor das Android-Verzeichnis erst zur Build-Zeit anlegt. Diese Dateien existieren nicht im Repo (nur als Referenz in `android-src/`).
 
 ---
 
-## NFC / Chip-Kommunikation
+## NFC-Kommunikation im Detail
 
 ### Chip-Typ
-
-NXP **NTAG 424 DNA TagTamper** (auch NTAG 424 TT). ISO 14443-4 kompatibel (IsoDep). Kommunikation läuft über APDU-Kommandos.
+**NXP NTAG 424 DNA TagTamper (NTAG 424 TT)**  
+ISO 14443-4 kompatibel → kommuniziert über IsoDep (APDU-Kommandos)
 
 ### APDU-Sequenz
 
-**1. SELECT APPLICATION**
+**Schritt 1: SELECT APPLICATION**
 ```
-CLA=00 INS=A4 P1=04 P2=0C Lc=07  AID: D2 76 00 00 85 01 01
+CLA=00 INS=A4 P1=04 P2=0C Lc=07
+Data: D2 76 00 00 85 01 01   ← NTAG 424 Application Identifier
 ```
-Antwort: `90 00` = Erfolg
+Erwartete Antwort: `90 00` (Erfolg)
 
-**2. GetTTStatus (CMD 0xF7)**
+**Schritt 2: GetTTStatus (Proprietary Command 0xF7)**
 ```
 CLA=90 INS=F7 P1=00 P2=00 Lc=00 Le=00
 ```
-Antwort-Interpretation:
+
+Antwort-Codes:
 | SW1 | SW2 | Bedeutung |
 |-----|-----|-----------|
-| `91` | `00` | Erfolg → Byte 0+1 enthalten den Tamper-Status (ASCII) |
-| `91` | `AD` | AUTH_REQUIRED → TTStatusKey ist gesetzt, Authentifizierung nötig |
-| `91` | `1C` | II → Tamper-Feature nicht initialisiert |
+| `91` | `00` | Erfolg — Tamper-Bytes folgen |
+| `91` | `AD` | AUTH_REQUIRED — TTStatusKey gesetzt |
+| `91` | `1C` | ILLEGAL_COMMAND_CODE — Feature nicht initialisiert |
 
-**3. Tamper-Status-Bytes**
-Die ersten 2 Bytes der Antwort bei `91 00`:
-| Wert (hex) | ASCII | Bedeutung |
-|------------|-------|-----------|
-| `43 43` | `CC` | Tamper-Draht intakt – Chip wurde nicht geöffnet ✅ |
-| `4F 4F` | `OO` | Tamper-Draht gebrochen – Chip wurde geöffnet/manipuliert ❌ |
-| `4F 43` | `OC` | War einmal beschädigt, jetzt wieder OK ⚠️ |
-| `49 49` | `II` | Tamper-Feature nicht aktiviert |
+**Schritt 3: Tamper-Status auslesen**
+Bei Antwort `91 00`: erste 2 Bytes sind der Tamper-Status als ASCII:
+
+| Hex | ASCII | Status | Bedeutung |
+|-----|-------|--------|-----------|
+| `43 43` | `CC` | ✅ Intakt | Tamper-Draht geschlossen, Chip nicht manipuliert |
+| `4F 4F` | `OO` | ❌ Gebrochen | Draht gebrochen — Chip wurde geöffnet |
+| `4F 43` | `OC` | ⚠️ War gebrochen | Einmal geöffnet, Draht scheint wieder geschlossen |
+| `49 49` | `II` | ℹ️ Nicht aktiviert | Tamper-Feature nicht konfiguriert |
 
 ### UID-Format
-
-Die UID kommt vom Java-Plugin als Hex-String **ohne** Doppelpunkte, z.B. `04C1685ABF1D90`. Das `formatUID()`-Hilfsmethod in der voll ausgebauten `Ntag424Plugin.java` (in `android-src/`) gibt Doppelpunkte aus — **daher beim Registry-Eintrag ohne Doppelpunkte arbeiten**, der `normalizeUID()`-Normalizer in `chipRegistry.ts` entfernt sie ohnehin.
+UID kommt als Hex-String **ohne** Doppelpunkte aus dem Java-Plugin: `04C1685ABF1D90`  
+Lookup in Registry: `normalizeUID()` entfernt Doppelpunkte/Leerzeichen/Bindestriche und macht uppercase — matching ist case-insensitiv.
 
 ---
 
-## Architektur der App
+## NFCScanner.tsx — Komponentenaufbau
 
-### JavaScript-Seite (`src/lib/ntag424.ts`)
+Die zentrale Komponente (`src/components/NFCScanner.tsx`) enthält alle NFC-bezogenen Unterkomponenten:
 
-Capacitor-Bridge zum Java-Plugin:
-- `isNativeAvailable()` → prüft ob Capacitor native Platform läuft
-- `startNativeScan(onResult, onError)` → registriert `tagRead`-Listener, startet Plugin
-- `stopNativeScan()` → entfernt Listener, stoppt Plugin
+| Unterkomponente | Beschreibung |
+|---|---|
+| `ScanButton` | Großer runder Scan-Button (144×144px), pulsiert während Scan |
+| `VerifyBadge` | Großes Ergebnis-Badge (grün/orange/rot je nach Ergebnis) |
+| `TamperPill` | Kleines Badge mit Tamper-Status (immer sichtbar) |
+| `UIDRow` | Zeigt UID mit Copy-Button |
+| `OnlineActions` | Zwei Buttons: „Online verifizieren" + „Aufladen" + optionaler „Website anschauen"-Link |
+| `RawDataPanel` | Aufklappbarer Bereich mit JSON-Rohdaten |
+| `HistoryItem` | Eintrag im Scan-Verlauf |
+| `NFCScanner` | Haupt-Export, verwaltet den gesamten State |
 
-### Java-Plugin-Schnittstelle
-
-Plugin-Name: `"Ntag424"` (so registriert in `MainActivity.java` via `registerPlugin(Ntag424Plugin.class)`)
-
-Methoden:
-- `startScan()` → Promise, resolves sofort, dann kommen Events
-- `stopScan()` → Promise
-
-Events:
-- `tagRead` → `{ uid: string, tamperStatus: string, debug: string }`
-
-### Scan-Flow (React)
+### State-Maschine
 
 ```
-[Scan-Button drücken]
-       ↓
-startNativeScan() aufrufen
-       ↓
-Status = 'scanning' (blau pulsierend, bleibt so bis manuell gestoppt)
-       ↓
-Tag ranhalten → tagRead-Event kommt
-       ↓
-handleResult() → setLastScan() + Status bleibt 'scanning'
-       ↓
-classify(scan) → lookupChip(uid) gegen CHIP_REGISTRY
-       ↓
-VerifyResult: 'verified' | 'tampered_known' | 'unknown'
-       ↓
-UI zeigt Ergebnis + Scanner läuft weiter für nächsten Tag
+idle
+  ↓ (Scan-Button drücken)
+scanning  ←──────────────────────────────────┐
+  ↓ (Tag ranhalten → tagRead-Event)           │
+scanning (mit lastScan gesetzt)  ─────────────┘ (nächster Tag)
+  ↓ (Stopp-Button)
+idle
+
+scanning → error (bei NFC-Fehler) → idle (bei Retry)
 ```
 
-**Wichtig:** Nach einem Scan-Ergebnis bleibt `scanStatus` auf `'scanning'` (nicht `'success'`!). Der Java-Scanner läuft weiter und wartet auf den nächsten Tag. Nur wenn der Benutzer aktiv stoppt, geht der Status auf `'idle'`.
+**Wichtig:** Der Status bleibt auf `scanning` auch nach einem Scan-Ergebnis. Der Scanner wartet auf den nächsten Tag. `lastScan` wird bei jedem neuen Tag überschrieben. Die `OnlineActions`-Buttons resetten sich via `useEffect` auf `scan.uid + scan.timestamp`.
 
-### Verification-Logik
+---
+
+## Nostr-Integration
+
+### usePublishAnonymous (KEIN Login nötig)
+
+Events werden mit einem **fest eingebetteten App-Keypair** signiert:
 
 ```typescript
-function classify(scan: ScanResult): VerifyResult {
-  const chip = lookupChip(scan.uid);           // in CHIP_REGISTRY suchen
-  if (!chip) return { kind: 'unknown' };        // UID nicht registriert
-  const tamperOk = scan.tamperStatus === 'CC' || scan.tamperStatus === 'II';
-  return tamperOk
-    ? { kind: 'verified', chip }               // grün: bekannt + intakt
-    : { kind: 'tampered_known', chip };         // gelb: bekannt + tampered
+// src/hooks/usePublishAnonymous.ts
+const APP_SECRET_KEY = new Uint8Array([
+  0x7a, 0x3f, 0x12, 0xc8, 0x4e, 0x91, 0xb5, 0x6d,
+  // ... 32 Bytes total
+]);
+```
+
+Der Key ist deterministisch und hat keinen Identitätswert. Events werden direkt via WebSocket an 3 Relays gesendet:
+- `wss://relay.ditto.pub`
+- `wss://relay.primal.net`
+- `wss://relay.damus.io`
+
+Mindestens 1 Relay muss antworten, sonst Error-Toast.
+
+### Event-Struktur
+
+**Online verifizieren (Kind 6129):**
+```json
+{
+  "kind": 6129,
+  "content": "{\"uid\":\"04C1685ABF1D90\",\"label\":\"11.000 sats\",\"sats\":11000,\"tamperStatus\":\"CC\",\"result\":\"verified\"}",
+  "tags": [["t", "bitcoin-note-verifier"], ["alt", "Bitcoin Note online verification log"]]
 }
 ```
 
-### UI-Zustände
-
-| VerifyResult | Farbe | Icon | Bedeutung |
-|---|---|---|---|
-| `verified` | Grün | ✅ CheckCircle | Chip bekannt + Tamper intakt |
-| `tampered_known` | Gelb/Amber | ✗ XCircle | Chip bekannt + Tamper beschädigt |
-| `unknown` | Rot | ? HelpCircle | UID nicht in Registry |
-
-Der **TamperPill** (kleines Badge mit Tamper-Status) wird bei **allen** drei Zuständen angezeigt — also auch wenn der Chip verified ist.
-
----
-
-## Technologie-Stack
-
-- **React 19** + TypeScript
-- **TailwindCSS 4** (dark theme, slate-900 Hintergrund)
-- **Capacitor 8.4** (Web→Native Bridge)
-- **shadcn/ui** (Badge, Card, Button)
-- **Vite 8** (Build)
-- **GitHub Actions** (APK-Build, Java 21 + Android SDK 34)
+**Aufladen (Kind 3491):**
+```json
+{
+  "kind": 3491,
+  "content": "{\"uid\":\"04C1685ABF1D90\",\"label\":\"11.000 sats\",\"sats\":11000}",
+  "tags": [["t", "bitcoin-note-verifier"], ["alt", "Bitcoin Note reload request"]]
+}
+```
 
 ---
 
-## Bekannte Einschränkungen / Offene Punkte
+## Chips verwalten
 
-1. **Kein Server-Endpunkt** — der "Rohdaten an Server senden"-Button existiert, die Server-URL ist noch nicht konfiguriert. Payload ist bereits vorbereitet als JSON mit `uid`, `tamperStatus`, `verifyResult`, `label`, `timestamp`.
+### Chip hinzufügen
 
-2. **Nur Debug-APK** — der Workflow baut `assembleDebug`. Für Production-APK müsste ein Keystore eingerichtet werden.
+**Datei: `chips.json`** (Quelldatei)
+```json
+[
+  { "uid": "04C1685ABF1D90", "label": "11.000 sats", "info": "", "issuedAt": "04.07.2026" },
+  { "uid": "NEUE_UID_HIER",  "label": "20.000 sats", "info": "", "issuedAt": "TT.MM.JJJJ" }
+]
+```
 
-3. **AUTH_REQUIRED** — Chips auf denen `TTStatusKey` gesetzt ist können den Tamper-Status nicht ohne Authentifizierung liefern. Momentan als eigener Status angezeigt, keine Authentifizierung implementiert.
+Das `generate-registry.cjs` Script liest `chips.json` und:
+- Parst `sats` automatisch aus dem `label`-Feld (`"11.000 sats"` → `11000`)
+- Schreibt `src/lib/chipRegistry.ts` neu mit allen Exporten inkl. `KIND_VERIFY_LOG`, `KIND_RELOAD_REQUEST`, `APP_TAG`
 
-4. **NDEF-Lesen** — der vollständige Plugin-Code in `android-src/Ntag424Plugin.java` enthält optionalen NDEF-URL-Leser (SUN-URL). Im vereinfachten Inline-Plugin im Workflow ist das weggelassen.
+Nach Änderung: pushen → GitHub Actions baut neue APK.
 
-5. **Scan läuft endlos** — der Scanner stoppt nicht automatisch. Nutzer muss manuell stoppen.
+**Gleichzeitig** muss die Website-Registry aktualisiert werden (`src/lib/chipRegistry.ts` im Website-Repo), sonst zeigt die Website den neuen Chip nicht.
+
+### generate-registry.cjs — wichtige Details
+
+Das Script (`scripts/generate-registry.cjs`) **überschreibt** `src/lib/chipRegistry.ts` vollständig. Es generiert:
+- `ChipEntry` Interface (mit `sats`-Feld)
+- `CHIP_REGISTRY` Array
+- `normalizeUID()` Funktion
+- `lookupChip()` Funktion
+- `KIND_VERIFY_LOG = 6129`
+- `KIND_RELOAD_REQUEST = 3491`
+- `APP_TAG = 'bitcoin-note-verifier'`
+
+**Vorsicht:** Wenn man `src/lib/chipRegistry.ts` direkt bearbeitet, wird es beim nächsten Build durch das Script überschrieben. Änderungen immer in `chips.json` und `generate-registry.cjs` vornehmen.
 
 ---
 
-## Repositories
+## Verification-Logik
 
-- **Dieses Repo (v2):** `https://github.com/TUitio123/ntag424-tt-scanner-v2` (privat) — aktueller Stand
-- **Altes Repo:** `https://github.com/TUitio123/ntag424-tt-scanner` (privat) — Ursprung, enthält vollständige `Ntag424Plugin.java` in `android-src/`
+```typescript
+function classify(scan: ScanResult): VerifyResult {
+  const chip = lookupChip(scan.uid);
+  if (!chip) return { kind: 'unknown' };
+  // Nur CC (Draht intakt) = vollständig verifiziert
+  return scan.tamperStatus === 'CC'
+    ? { kind: 'verified', chip }
+    : { kind: 'warn', chip };  // alle anderen Status → Warnung
+}
+```
+
+| VerifyResult | Anzeige | Icon |
+|---|---|---|
+| `verified` | Grün, „Verified" | CheckCircle |
+| `warn` | Orange, „Achtung" | AlertTriangle + Erklärungstext |
+| `unknown` | Rot, „Unbekannt" | HelpCircle |
 
 ---
 
-## Schnellstart für neue KI
+## Bekannte Einschränkungen
 
-1. **Chips hinzufügen:** `src/lib/chipRegistry.ts` bearbeiten, UID ohne Doppelpunkte
-2. **APK neu bauen:** pushen → Actions abwarten → Artifact herunterladen
-3. **UI ändern:** `src/components/NFCScanner.tsx` (alles in einer Datei)
-4. **Java-Plugin ändern:** `.github/workflows/build-apk.yml` Schritte 8+9 (inline Java)
-5. **Vollständiger Plugin-Code:** `android-src/Ntag424Plugin.java` als Referenz
+| Problem | Status |
+|---|---|
+| Nur Debug-APK | Kein Keystore eingerichtet. Android zeigt Sicherheitswarnung bei Installation. |
+| AUTH_REQUIRED | Chips mit gesetztem TTStatusKey können Tamper-Status nicht ohne Auth liefern. Nicht implementiert. |
+| Endloser Scan | Scanner stoppt nicht automatisch. Nutzer muss manuell stoppen. |
+| Keine NDEF-Lese-Unterstützung | Der vollständige Plugin-Code in `android-src/` enthält NDEF-Lesen, das vereinfachte Build-Plugin nicht. |
+| Website-URL hardcoded | `WEBSITE_URL = 'https://Testtest123.shakespeare.wtf'` in `NFCScanner.tsx` — bei Domain-Wechsel anpassen. |
+
+---
+
+## Zugehörige Repositories
+
+| Repository | Inhalt | Sichtbarkeit |
+|---|---|---|
+| `TUitio123/ntag424-tt-scanner-v2` | App (Primär) | 🔒 Privat |
+| `TUitio123/bitcoin-note-verifier` | Website (Primär) | 🔒 Privat |
+| `TUitio123/Backup-424-chip-App` | App-Backup (dieses Repo) | 🔒 Privat |
+| `TUitio123/Backup-424-chip-website` | Website-Backup | 🔒 Privat |
