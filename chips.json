@@ -1,50 +1,10 @@
 [
-  {
-    "uid": "04C1685ABF1D90",
-    "label": "11.000 sats",
-    "info": "",
-    "issuedAt": "01.07.2026"
-  },
-  {
-    "uid": "04AC695ABF1D90",
-    "label": "11.500 sats",
-    "info": "",
-    "issuedAt": "01.07.2026"
-  },
-  {
-    "uid": "04C6695ABF1D90",
-    "label": "12.000 sats",
-    "info": "",
-    "issuedAt": "01.07.2026"
-  },
-  {
-    "uid": "04BD695ABF1D90",
-    "label": "12.500 sats",
-    "info": "",
-    "issuedAt": "01.07.2026"
-  },
-  {
-    "uid": "04AE695ABF1D90",
-    "label": "13.000 sats",
-    "info": "",
-    "issuedAt": "01.07.2026"
-  },
-  {
-    "uid": "04AD695ABF1D90",
-    "label": "13.500 sats",
-    "info": "",
-    "issuedAt": "01.07.2026"
-  },
-  {
-    "uid": "04BC695ABF1D90",
-    "label": "14.000 sats",
-    "info": "",
-    "issuedAt": "01.07.2026"
-  },
-  {
-    "uid": "0493695ABF1D90",
-    "label": "15.000 sats",
-    "info": "",
-    "issuedAt": "01.07.2026"
-  }
+  { "uid": "04C1685ABF1D90", "label": "1.100 sats", "info": "", "issuedAt": "04.07.2026" },
+  { "uid": "04AC695ABF1D90", "label": "1.150 sats", "info": "", "issuedAt": "04.07.2026" },
+  { "uid": "04C6695ABF1D90", "label": "1.200 sats", "info": "", "issuedAt": "04.07.2026" },
+  { "uid": "04BD695ABF1D90", "label": "1.250 sats", "info": "", "issuedAt": "04.07.2026" },
+  { "uid": "04AE695ABF1D90", "label": "1.300 sats", "info": "", "issuedAt": "04.07.2026" },
+  { "uid": "04AD695ABF1D90", "label": "1.350 sats", "info": "", "issuedAt": "04.07.2026" },
+  { "uid": "04BC695ABF1D90", "label": "1.400 sats", "info": "", "issuedAt": "04.07.2026" },
+  { "uid": "0493695ABF1D90", "label": "1.500 sats", "info": "", "issuedAt": "04.07.2026" }
 ]
