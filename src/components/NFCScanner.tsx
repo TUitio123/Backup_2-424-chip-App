@@ -2,14 +2,17 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Wifi, WifiOff, CheckCircle, XCircle, AlertTriangle,
   RefreshCw, Copy, ChevronDown, ChevronUp, Zap,
-  ShieldAlert, HelpCircle, Globe, Upload, Loader2,
+  ShieldAlert, HelpCircle, Globe, Upload, Loader2, Trash2, Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   ScanResult, ScanStatus, TamperStatus,
   isNativeAvailable, startNativeScan, stopNativeScan,
 } from '@/lib/ntag424';
-import { lookupChip, ChipEntry, KIND_VERIFY_LOG, KIND_RELOAD_REQUEST, APP_TAG } from '@/lib/chipRegistry';
+import {
+  lookupChip, ChipEntry, KIND_VERIFY_LOG, KIND_RELOAD_REQUEST,
+  KIND_INVALIDATE_REQUEST, APP_TAG,
+} from '@/lib/chipRegistry';
 import { useToast } from '@/hooks/useToast';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -262,22 +265,17 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
   const { toast } = useToast();
   const [verifyState, setVerifyState] = useState<ActionState>('idle');
   const [reloadState, setReloadState] = useState<ActionState>('idle');
+  const [invalidateState, setInvalidateState] = useState<ActionState>('idle');
+  const [showInvalidateConfirm, setShowInvalidateConfirm] = useState(false);
 
   const chip = verify.kind !== 'unknown' ? verify.chip : null;
 
-  // Reset both button states whenever the scanned chip changes
-  const scanKey = scan.uid + scan.timestamp;
-  const prevKeyRef = useState(() => scanKey);
-  if (prevKeyRef[0] !== scanKey) {
-    prevKeyRef[0] = scanKey;
-    // Using a ref-trick inside render is fine here because the states
-    // being reset are local to this component instance which remounts
-    // (key prop on the parent) — but we also handle it via useEffect below.
-  }
-
+  // Reset button states whenever the scanned chip changes
   useEffect(() => {
     setVerifyState('idle');
     setReloadState('idle');
+    setInvalidateState('idle');
+    setShowInvalidateConfirm(false);
   }, [scan.uid, scan.timestamp]);
 
   const handleVerify = async () => {
@@ -305,6 +303,10 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
     }
   };
 
+  /**
+   * Aufladen: Sendet Kind 3491 Nostr-Event als Anfrage.
+   * Der Aufladen-Button auf der Website wird erst danach klickbar.
+   */
   const handleReload = async () => {
     setReloadState('loading');
     try {
@@ -321,9 +323,42 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
         ],
       });
       setReloadState('done');
-      toast({ title: '📤 Aufladen angefordert', description: 'Anfrage auf der Website sichtbar.' });
+      toast({
+        title: '📤 Aufladen angefordert',
+        description: 'Anfrage gesendet. Invoice auf der Website öffnen.',
+      });
     } catch (e) {
       setReloadState('error');
+      toast({ title: 'Fehler', description: String(e), variant: 'destructive' });
+    }
+  };
+
+  /**
+   * Entwerten: Sendet Kind 3492 Nostr-Event als Entwertungs-Anfrage.
+   */
+  const handleInvalidate = async () => {
+    setShowInvalidateConfirm(false);
+    setInvalidateState('loading');
+    try {
+      await publishEvent({
+        kind: KIND_INVALIDATE_REQUEST,
+        content: JSON.stringify({
+          uid: scan.uid,
+          label: chip?.label ?? '',
+          sats: chip?.sats ?? 0,
+        }),
+        tags: [
+          ['t', APP_TAG],
+          ['alt', 'Bitcoin Note invalidation request'],
+        ],
+      });
+      setInvalidateState('done');
+      toast({
+        title: '🗑️ Entwertung beantragt',
+        description: 'Anfrage gesendet. Status auf der Website aktualisiert.',
+      });
+    } catch (e) {
+      setInvalidateState('error');
       toast({ title: 'Fehler', description: String(e), variant: 'destructive' });
     }
   };
@@ -332,6 +367,7 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
 
   return (
     <div className="space-y-2">
+      {/* Verify + Reload row */}
       <div className="grid grid-cols-2 gap-3">
         {/* Online verifizieren */}
         <Button
@@ -357,7 +393,7 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
           {verifyState === 'done' ? 'Eingetragen!' : verifyState === 'error' ? 'Fehler – Retry' : 'Online verifizieren'}
         </Button>
 
-        {/* Aufladen */}
+        {/* Aufladen anfordern */}
         <Button
           onClick={handleReload}
           disabled={reloadState === 'loading' || reloadState === 'done'}
@@ -382,7 +418,72 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
         </Button>
       </div>
 
-      {/* "Website anschauen" – erscheint nach jedem erfolgreichen Klick */}
+      {/* Hinweis wenn Aufladen angefordert */}
+      {reloadState === 'done' && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-2.5 text-center">
+          <p className="text-amber-300/80 text-xs">
+            Invoice jetzt auf der Website verfügbar → Button dort klicken
+          </p>
+        </div>
+      )}
+
+      {/* Entwerten-Bereich */}
+      {chip !== null && (
+        <div className="pt-1 border-t border-white/10">
+          {!showInvalidateConfirm && invalidateState !== 'done' && (
+            <button
+              onClick={() => setShowInvalidateConfirm(true)}
+              disabled={invalidateState === 'loading'}
+              className={cn(
+                'w-full flex items-center justify-center gap-2 h-10 rounded-xl border text-xs font-bold transition-all',
+                invalidateState === 'error'
+                  ? 'bg-red-500/15 border-red-500/30 text-red-300 hover:bg-red-500/20'
+                  : 'bg-red-500/8 border-red-500/20 text-red-400/70 hover:bg-red-500/12 hover:text-red-400',
+              )}
+            >
+              {invalidateState === 'loading' ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="w-3.5 h-3.5" />
+              )}
+              {invalidateState === 'error' ? 'Fehler – Retry' : 'Entwertung beantragen'}
+            </button>
+          )}
+          {showInvalidateConfirm && (
+            <div className="rounded-xl border border-red-500/25 bg-red-500/8 p-3 space-y-2">
+              <p className="text-red-300 text-xs text-center font-semibold">
+                Schein wirklich entwerten?
+              </p>
+              <p className="text-red-400/60 text-[10px] text-center">
+                Dies sendet eine Entwertungs-Anfrage via Nostr.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleInvalidate}
+                  className="h-9 rounded-lg border border-red-500/30 bg-red-500/15 text-red-300 text-xs font-bold hover:bg-red-500/25 transition-colors"
+                >
+                  <Check className="w-3.5 h-3.5 inline mr-1" />
+                  Ja, entwerten
+                </button>
+                <button
+                  onClick={() => setShowInvalidateConfirm(false)}
+                  className="h-9 rounded-lg border border-white/15 bg-white/5 text-slate-400 text-xs font-bold hover:bg-white/10 transition-colors"
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          )}
+          {invalidateState === 'done' && (
+            <div className="flex items-center justify-center gap-2 h-10 rounded-xl border border-red-500/20 bg-red-500/8">
+              <CheckCircle className="w-3.5 h-3.5 text-red-400" />
+              <span className="text-red-400 text-xs font-bold">Entwertung beantragt</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* "Website anschauen" — erscheint nach jedem erfolgreichen Klick */}
       {anyDone && (
         <a
           href={WEBSITE_URL}
@@ -532,7 +633,7 @@ export function NFCScanner() {
           {/* ── ONLINE ACTION BUTTONS ── */}
           <div className="pt-1">
             <p className="text-slate-500 text-xs text-center mb-3">
-              Ergebnis online eintragen oder Aufladen anfordern:
+              Ergebnis online eintragen, Aufladen anfordern oder Entwerten:
             </p>
             <OnlineActions scan={lastScan} verify={currentVerify} />
           </div>
