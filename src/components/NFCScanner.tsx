@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/useToast';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { useNostrPublish } from '@/hooks/useNostrPublish';
+import { usePublishAnonymous } from '@/hooks/usePublishAnonymous';
 
 // ─── Verification result type ─────────────────────────────────────────────────
 
@@ -256,7 +256,7 @@ function HistoryItem({ scan, verify }: { scan: ScanResult; verify: VerifyResult 
 type ActionState = 'idle' | 'loading' | 'done' | 'error';
 
 function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResult }) {
-  const { mutateAsync: publishEvent } = useNostrPublish();
+  const { mutateAsync: publishEvent } = usePublishAnonymous();
   const { toast } = useToast();
   const [verifyState, setVerifyState] = useState<ActionState>('idle');
   const [reloadState, setReloadState] = useState<ActionState>('idle');
