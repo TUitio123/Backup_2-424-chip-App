@@ -2,58 +2,49 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Wifi, WifiOff, CheckCircle, XCircle, AlertTriangle,
   RefreshCw, Copy, ChevronDown, ChevronUp, Zap,
-  Send, ShieldAlert, HelpCircle,
+  ShieldAlert, HelpCircle, Globe, Upload, Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   ScanResult, ScanStatus, TamperStatus,
   isNativeAvailable, startNativeScan, stopNativeScan,
 } from '@/lib/ntag424';
-import { lookupChip, ChipEntry } from '@/lib/chipRegistry';
+import { lookupChip, ChipEntry, KIND_VERIFY_LOG, KIND_RELOAD_REQUEST, APP_TAG } from '@/lib/chipRegistry';
 import { useToast } from '@/hooks/useToast';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { useNostrPublish } from '@/hooks/useNostrPublish';
 
 // ─── Verification result type ─────────────────────────────────────────────────
 
 type VerifyResult =
-  | { kind: 'verified'; chip: ChipEntry }   // UID bekannt + Tamper = CC → grün
-  | { kind: 'warn';     chip: ChipEntry }   // UID bekannt + Tamper ≠ CC → orange Warnung
-  | { kind: 'unknown' };                    // UID nicht in Registry → rot
+  | { kind: 'verified'; chip: ChipEntry }
+  | { kind: 'warn';     chip: ChipEntry }
+  | { kind: 'unknown' };
 
 function classify(scan: ScanResult): VerifyResult {
   const chip = lookupChip(scan.uid);
   if (!chip) return { kind: 'unknown' };
-  // Nur CC (Draht intakt + abgefragt) = wirklich OK
-  // II, OO, OC, AUTH_REQUIRED, UNKNOWN → alle orange Warnung
   return scan.tamperStatus === 'CC'
     ? { kind: 'verified', chip }
     : { kind: 'warn', chip };
 }
 
-// ─── Tamper pill – immer klein angezeigt ──────────────────────────────────────
+// ─── Tamper pill ──────────────────────────────────────────────────────────────
 
 function TamperPill({ tamperStatus, verifyKind }: {
   tamperStatus: TamperStatus;
   verifyKind: VerifyResult['kind'];
 }) {
   const isGreen = tamperStatus === 'CC';
-
   const color =
     verifyKind === 'verified' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25' :
     verifyKind === 'warn'     ? 'bg-orange-500/15 text-orange-300 border-orange-500/25'    :
                                 'bg-slate-700/60 text-slate-400 border-slate-600';
-
   return (
-    <div className={cn(
-      'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-mono',
-      color,
-    )}>
-      <span className={cn(
-        'w-1.5 h-1.5 rounded-full flex-shrink-0',
-        isGreen ? 'bg-emerald-400' : 'bg-orange-400',
-      )} />
+    <div className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-mono', color)}>
+      <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', isGreen ? 'bg-emerald-400' : 'bg-orange-400')} />
       <span>Tamper: <span className="font-bold">{tamperStatus}</span></span>
       {!isGreen && <AlertTriangle className="w-3 h-3 opacity-80" />}
     </div>
@@ -62,10 +53,7 @@ function TamperPill({ tamperStatus, verifyKind }: {
 
 // ─── Big verification badge ───────────────────────────────────────────────────
 
-function VerifyBadge({ verify, scan }: {
-  verify: VerifyResult;
-  scan: ScanResult;
-}) {
+function VerifyBadge({ verify, scan }: { verify: VerifyResult; scan: ScanResult }) {
   if (verify.kind === 'verified') {
     return (
       <div className="flex flex-col items-center gap-3 py-6">
@@ -80,28 +68,21 @@ function VerifyBadge({ verify, scan }: {
         <div className="text-center">
           <div className="text-emerald-400 font-bold text-sm uppercase tracking-widest mb-1">Verified</div>
           <div className="text-white font-extrabold text-4xl tracking-tight">{verify.chip.label}</div>
-          {verify.chip.info && (
-            <div className="text-slate-400 text-sm mt-1">{verify.chip.info}</div>
-          )}
-          {verify.chip.issuedAt && (
-            <div className="text-slate-600 text-xs mt-0.5">Ausgegeben: {verify.chip.issuedAt}</div>
-          )}
+          {verify.chip.info && <div className="text-slate-400 text-sm mt-1">{verify.chip.info}</div>}
+          {verify.chip.issuedAt && <div className="text-slate-600 text-xs mt-0.5">Ausgegeben: {verify.chip.issuedAt}</div>}
         </div>
-        {/* Tamper pill – immer anzeigen, auch bei verified */}
         <TamperPill tamperStatus={scan.tamperStatus} verifyKind="verified" />
       </div>
     );
   }
 
   if (verify.kind === 'warn') {
-    // Beschreibung je nach konkretem Tamper-Status
     const warnText =
       scan.tamperStatus === 'OO' ? 'Tamper-Draht gebrochen – Chip wurde geöffnet.' :
       scan.tamperStatus === 'OC' ? 'Chip war geöffnet, Draht scheint jetzt wieder geschlossen.' :
       scan.tamperStatus === 'II' ? 'Tamper-Feature nicht aktiviert – kein Draht konfiguriert.' :
       scan.tamperStatus === 'AUTH_REQUIRED' ? 'Tamper-Status konnte nicht gelesen werden (Auth erforderlich).' :
       `Tamper-Status unklar (${scan.tamperStatus}).`;
-
     return (
       <div className="flex flex-col items-center gap-3 py-6">
         <div className="w-28 h-28 rounded-full bg-orange-500/15 border-4 border-orange-500/50 flex items-center justify-center shadow-[0_0_40px_rgba(249,115,22,0.2)]">
@@ -110,12 +91,8 @@ function VerifyBadge({ verify, scan }: {
         <div className="text-center">
           <div className="text-orange-400 font-bold text-sm uppercase tracking-widest mb-1">Achtung</div>
           <div className="text-white font-extrabold text-4xl tracking-tight">{verify.chip.label}</div>
-          {verify.chip.info && (
-            <div className="text-slate-400 text-sm mt-1">{verify.chip.info}</div>
-          )}
-          {verify.chip.issuedAt && (
-            <div className="text-slate-600 text-xs mt-0.5">Ausgegeben: {verify.chip.issuedAt}</div>
-          )}
+          {verify.chip.info && <div className="text-slate-400 text-sm mt-1">{verify.chip.info}</div>}
+          {verify.chip.issuedAt && <div className="text-slate-600 text-xs mt-0.5">Ausgegeben: {verify.chip.issuedAt}</div>}
         </div>
         <TamperPill tamperStatus={scan.tamperStatus} verifyKind="warn" />
         <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl px-4 py-3 text-center max-w-xs">
@@ -127,7 +104,6 @@ function VerifyBadge({ verify, scan }: {
     );
   }
 
-  // unknown
   return (
     <div className="flex flex-col items-center gap-3 py-6">
       <div className="w-28 h-28 rounded-full bg-red-500/15 border-4 border-red-500/40 flex items-center justify-center">
@@ -140,7 +116,6 @@ function VerifyBadge({ verify, scan }: {
           Diese UID ist nicht in der Registry. Chip gehört nicht zu diesem System.
         </p>
       </div>
-      {/* Tamper pill auch bei unknown */}
       <TamperPill tamperStatus={scan.tamperStatus} verifyKind="unknown" />
     </div>
   );
@@ -148,13 +123,8 @@ function VerifyBadge({ verify, scan }: {
 
 // ─── Raw data panel ───────────────────────────────────────────────────────────
 
-function RawDataPanel({ scan, verify, onSend }: {
-  scan: ScanResult;
-  verify: VerifyResult;
-  onSend: (payload: string) => void;
-}) {
+function RawDataPanel({ scan, verify }: { scan: ScanResult; verify: VerifyResult }) {
   const [open, setOpen] = useState(false);
-
   const payload = JSON.stringify({
     uid: scan.uid,
     tamperStatus: scan.tamperStatus,
@@ -166,35 +136,16 @@ function RawDataPanel({ scan, verify, onSend }: {
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors"
-      >
-        <span className="text-slate-400 text-xs font-medium uppercase tracking-wider">
-          Rohdaten
-        </span>
-        {open
-          ? <ChevronUp className="w-4 h-4 text-slate-500" />
-          : <ChevronDown className="w-4 h-4 text-slate-500" />}
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors">
+        <span className="text-slate-400 text-xs font-medium uppercase tracking-wider">Rohdaten</span>
+        {open ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
       </button>
-
       {open && (
-        <div className="border-t border-white/10 p-3 space-y-3">
+        <div className="border-t border-white/10 p-3">
           <pre className="text-xs text-slate-300 font-mono bg-black/30 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
             {payload}
           </pre>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full border-blue-500/40 text-blue-300 hover:bg-blue-500/10 hover:border-blue-400"
-            onClick={() => onSend(payload)}
-          >
-            <Send className="w-3.5 h-3.5 mr-2" />
-            Rohdaten an Server senden
-          </Button>
-          <p className="text-slate-600 text-xs text-center">
-            Server-URL wird später konfiguriert
-          </p>
         </div>
       )}
     </div>
@@ -212,12 +163,8 @@ function UIDRow({ uid }: { uid: string }) {
         <div className="font-mono text-white text-sm tracking-widest">{uid}</div>
       </div>
       <button
-        onClick={() =>
-          navigator.clipboard.writeText(uid)
-            .then(() => toast({ title: 'UID kopiert' }))
-            .catch(() => {})}
-        className="text-slate-500 hover:text-slate-300 transition-colors p-2"
-      >
+        onClick={() => navigator.clipboard.writeText(uid).then(() => toast({ title: 'UID kopiert' })).catch(() => {})}
+        className="text-slate-500 hover:text-slate-300 transition-colors p-2">
         <Copy className="w-4 h-4" />
       </button>
     </div>
@@ -227,10 +174,7 @@ function UIDRow({ uid }: { uid: string }) {
 // ─── Scan button ──────────────────────────────────────────────────────────────
 
 function ScanButton({ status, hasResult, onScan, onStop }: {
-  status: ScanStatus;
-  hasResult: boolean;
-  onScan: () => void;
-  onStop: () => void;
+  status: ScanStatus; hasResult: boolean; onScan: () => void; onStop: () => void;
 }) {
   const scanning = status === 'scanning';
   return (
@@ -244,8 +188,7 @@ function ScanButton({ status, hasResult, onScan, onStop }: {
         scanning                 && 'bg-blue-600/30 border-blue-400 animate-pulse cursor-pointer',
         status === 'error'       && 'bg-red-600/20 border-red-500/50 hover:bg-red-600/30 cursor-pointer',
         status === 'unsupported' && 'bg-slate-800/50 border-slate-700 cursor-not-allowed opacity-50',
-      )}
-    >
+      )}>
       {scanning && (
         <>
           <span className="absolute inset-0 rounded-full border-4 border-blue-400 animate-ping opacity-25" />
@@ -265,11 +208,11 @@ function ScanButton({ status, hasResult, onScan, onStop }: {
         status === 'error'       && 'text-red-300',
         status === 'unsupported' && 'text-slate-500',
       )}>
-        {status === 'idle'   && 'Scannen'}
-        {scanning && !hasResult && 'Warte…'}
-        {scanning && hasResult  && 'Scannt…'}
-        {status === 'error'       && 'Retry'}
-        {status === 'unsupported' && 'N/A'}
+        {status === 'idle'              && 'Scannen'}
+        {scanning && !hasResult         && 'Warte…'}
+        {scanning && hasResult          && 'Scannt…'}
+        {status === 'error'             && 'Retry'}
+        {status === 'unsupported'       && 'N/A'}
       </span>
     </button>
   );
@@ -277,30 +220,20 @@ function ScanButton({ status, hasResult, onScan, onStop }: {
 
 // ─── History item ─────────────────────────────────────────────────────────────
 
-function HistoryItem({ scan, verify }: {
-  scan: ScanResult;
-  verify: VerifyResult;
-}) {
+function HistoryItem({ scan, verify }: { scan: ScanResult; verify: VerifyResult }) {
   const [open, setOpen] = useState(false);
-  const dot =
-    verify.kind === 'verified' ? 'bg-emerald-400' :
-    verify.kind === 'warn'     ? 'bg-orange-400'  : 'bg-red-400';
-  const label =
-    verify.kind !== 'unknown' ? verify.chip.label : 'Unbekannt';
-
+  const dot   = verify.kind === 'verified' ? 'bg-emerald-400' : verify.kind === 'warn' ? 'bg-orange-400' : 'bg-red-400';
+  const label = verify.kind !== 'unknown' ? verify.chip.label : 'Unbekannt';
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 p-3 hover:bg-white/5 transition-colors text-left"
-      >
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-3 p-3 hover:bg-white/5 transition-colors text-left">
         <div className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', dot)} />
         <div className="flex-1 min-w-0">
           <div className="text-white text-sm font-medium truncate">{label}</div>
           <div className="text-slate-500 text-xs font-mono truncate">{scan.uid}</div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {/* Tamper immer klein im Verlauf */}
           <Badge variant="outline" className="font-mono text-xs">{scan.tamperStatus}</Badge>
           <span className="text-slate-600 text-xs">
             {new Date(scan.timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
@@ -311,11 +244,118 @@ function HistoryItem({ scan, verify }: {
       {open && (
         <div className="border-t border-white/10 px-3 pb-3 pt-2 space-y-1.5">
           <div className="text-slate-500 text-xs font-mono break-all">{scan.uid}</div>
-          {scan.debug && (
-            <div className="text-slate-600 text-xs font-mono break-all">{scan.debug}</div>
-          )}
+          {scan.debug && <div className="text-slate-600 text-xs font-mono break-all">{scan.debug}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Online action buttons ────────────────────────────────────────────────────
+
+type ActionState = 'idle' | 'loading' | 'done' | 'error';
+
+function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResult }) {
+  const { mutateAsync: publishEvent } = useNostrPublish();
+  const { toast } = useToast();
+  const [verifyState, setVerifyState] = useState<ActionState>('idle');
+  const [reloadState, setReloadState] = useState<ActionState>('idle');
+
+  const chip = verify.kind !== 'unknown' ? verify.chip : null;
+
+  const handleVerify = async () => {
+    setVerifyState('loading');
+    try {
+      await publishEvent({
+        kind: KIND_VERIFY_LOG,
+        content: JSON.stringify({
+          uid: scan.uid,
+          label: chip?.label ?? '',
+          sats: chip?.sats ?? 0,
+          tamperStatus: scan.tamperStatus,
+          result: verify.kind,
+        }),
+        tags: [
+          ['t', APP_TAG],
+          ['alt', 'Bitcoin Note online verification log'],
+        ],
+      });
+      setVerifyState('done');
+      toast({ title: '✅ Online verifiziert', description: 'Eintrag auf bitcoin-note-verifier.shakespeare.wtf sichtbar.' });
+    } catch (e) {
+      setVerifyState('error');
+      toast({ title: 'Fehler', description: String(e), variant: 'destructive' });
+    }
+  };
+
+  const handleReload = async () => {
+    setReloadState('loading');
+    try {
+      await publishEvent({
+        kind: KIND_RELOAD_REQUEST,
+        content: JSON.stringify({
+          uid: scan.uid,
+          label: chip?.label ?? '',
+          sats: chip?.sats ?? 0,
+        }),
+        tags: [
+          ['t', APP_TAG],
+          ['alt', 'Bitcoin Note reload request'],
+        ],
+      });
+      setReloadState('done');
+      toast({ title: '📤 Aufladen angefordert', description: 'Anfrage auf der Website sichtbar.' });
+    } catch (e) {
+      setReloadState('error');
+      toast({ title: 'Fehler', description: String(e), variant: 'destructive' });
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {/* Online verifizieren */}
+      <Button
+        onClick={handleVerify}
+        disabled={verifyState === 'loading' || verifyState === 'done'}
+        className={cn(
+          'flex items-center gap-2 h-12 text-sm font-bold rounded-xl border transition-all',
+          verifyState === 'done'
+            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+            : 'bg-blue-500/15 border-blue-500/35 text-blue-300 hover:bg-blue-500/25',
+        )}
+        variant="outline"
+      >
+        {verifyState === 'loading' ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : verifyState === 'done' ? (
+          <CheckCircle className="w-4 h-4" />
+        ) : (
+          <Globe className="w-4 h-4" />
+        )}
+        {verifyState === 'done' ? 'Eingetragen!' : 'Online verifizieren'}
+      </Button>
+
+      {/* Aufladen */}
+      <Button
+        onClick={handleReload}
+        disabled={reloadState === 'loading' || reloadState === 'done'}
+        className={cn(
+          'flex items-center gap-2 h-12 text-sm font-bold rounded-xl border transition-all',
+          reloadState === 'done'
+            ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+            : 'bg-amber-500/10 border-amber-500/25 text-amber-300 hover:bg-amber-500/20',
+        )}
+        variant="outline"
+      >
+        {reloadState === 'loading' ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : reloadState === 'done' ? (
+          <CheckCircle className="w-4 h-4" />
+        ) : (
+          <Upload className="w-4 h-4" />
+        )}
+        {reloadState === 'done' ? 'Angefordert!' : 'Aufladen'}
+      </Button>
     </div>
   );
 }
@@ -328,14 +368,13 @@ export function NFCScanner() {
   const [history, setHistory] = useState<Array<{ scan: ScanResult; verify: VerifyResult }>>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const { toast } = useToast();
-
   const native = isNativeAvailable();
 
   useEffect(() => () => { stopNativeScan(); }, []);
 
   const handleResult = useCallback((result: ScanResult) => {
     setLastScan(result);
-    setScanStatus('scanning'); // bleibt scanning – NFC lauscht weiter auf den nächsten Tag
+    setScanStatus('scanning');
     setErrorMsg(null);
   }, []);
 
@@ -369,14 +408,6 @@ export function NFCScanner() {
     setScanStatus('idle');
   }, []);
 
-  const handleSend = (payload: string) => {
-    toast({
-      title: 'Server-URL noch nicht konfiguriert',
-      description: 'Die Ziel-URL wird später eingerichtet.',
-    });
-    console.log('[NFCScanner] send payload:', payload);
-  };
-
   const currentVerify = lastScan ? classify(lastScan) : null;
 
   return (
@@ -402,21 +433,15 @@ export function NFCScanner() {
         <ScanButton status={scanStatus} hasResult={lastScan !== null} onScan={startScan} onStop={stopScan} />
       </div>
 
-      {/* Hint */}
+      {/* Hints */}
       {scanStatus === 'idle' && !lastScan && (
-        <p className="text-center text-slate-500 text-sm">
-          NTAG 424 TT Tag an die Rückseite halten
-        </p>
+        <p className="text-center text-slate-500 text-sm">NTAG 424 TT Tag an die Rückseite halten</p>
       )}
       {scanStatus === 'scanning' && !lastScan && (
-        <p className="text-center text-blue-300 text-sm animate-pulse">
-          Halte den Tag an dein Gerät…
-        </p>
+        <p className="text-center text-blue-300 text-sm animate-pulse">Halte den Tag an dein Gerät…</p>
       )}
       {scanStatus === 'scanning' && lastScan && (
-        <p className="text-center text-blue-400/70 text-xs">
-          Bereit für nächsten Tag · Stopp zum Beenden
-        </p>
+        <p className="text-center text-blue-400/70 text-xs">Bereit für nächsten Tag · Stopp zum Beenden</p>
       )}
 
       {/* Error */}
@@ -447,7 +472,7 @@ export function NFCScanner() {
           {/* UID row */}
           <UIDRow uid={lastScan.uid} />
 
-          {/* Tamper detail – nur bei warn/unknown als extra Grid */}
+          {/* Tamper detail grid */}
           {(currentVerify.kind === 'warn' || currentVerify.kind === 'unknown') && (
             <div className="grid grid-cols-2 gap-2">
               <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
@@ -463,14 +488,20 @@ export function NFCScanner() {
             </div>
           )}
 
-          {/* Raw data panel – bei warn und unknown */}
+          {/* ── ONLINE ACTION BUTTONS ── */}
+          <div className="pt-1">
+            <p className="text-slate-500 text-xs text-center mb-3">
+              Ergebnis online eintragen oder Aufladen anfordern:
+            </p>
+            <OnlineActions scan={lastScan} verify={currentVerify} />
+          </div>
+
+          {/* Raw data panel */}
           {currentVerify.kind !== 'verified' && (
-            <RawDataPanel scan={lastScan} verify={currentVerify} onSend={handleSend} />
+            <RawDataPanel scan={lastScan} verify={currentVerify} />
           )}
 
-          <p className="text-center text-slate-600 text-xs">
-            Nächsten Tag einfach ranhalten
-          </p>
+          <p className="text-center text-slate-600 text-xs">Nächsten Tag einfach ranhalten</p>
         </div>
       )}
 
@@ -491,13 +522,10 @@ export function NFCScanner() {
       {history.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-slate-500 text-xs font-medium uppercase tracking-wider">
-              Verlauf ({history.length})
-            </h3>
+            <h3 className="text-slate-500 text-xs font-medium uppercase tracking-wider">Verlauf ({history.length})</h3>
             <button
               onClick={() => { setHistory([]); setLastScan(null); setScanStatus('idle'); }}
-              className="text-slate-600 hover:text-slate-400 text-xs flex items-center gap-1 transition-colors"
-            >
+              className="text-slate-600 hover:text-slate-400 text-xs flex items-center gap-1 transition-colors">
               <RefreshCw className="w-3 h-3" /> Löschen
             </button>
           </div>
