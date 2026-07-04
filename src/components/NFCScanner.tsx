@@ -253,6 +253,8 @@ function HistoryItem({ scan, verify }: { scan: ScanResult; verify: VerifyResult 
 
 // ─── Online action buttons ────────────────────────────────────────────────────
 
+const WEBSITE_URL = 'https://Testtest123.shakespeare.wtf';
+
 type ActionState = 'idle' | 'loading' | 'done' | 'error';
 
 function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResult }) {
@@ -262,6 +264,21 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
   const [reloadState, setReloadState] = useState<ActionState>('idle');
 
   const chip = verify.kind !== 'unknown' ? verify.chip : null;
+
+  // Reset both button states whenever the scanned chip changes
+  const scanKey = scan.uid + scan.timestamp;
+  const prevKeyRef = useState(() => scanKey);
+  if (prevKeyRef[0] !== scanKey) {
+    prevKeyRef[0] = scanKey;
+    // Using a ref-trick inside render is fine here because the states
+    // being reset are local to this component instance which remounts
+    // (key prop on the parent) — but we also handle it via useEffect below.
+  }
+
+  useEffect(() => {
+    setVerifyState('idle');
+    setReloadState('idle');
+  }, [scan.uid, scan.timestamp]);
 
   const handleVerify = async () => {
     setVerifyState('loading');
@@ -281,7 +298,7 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
         ],
       });
       setVerifyState('done');
-      toast({ title: '✅ Online verifiziert', description: 'Eintrag auf bitcoin-note-verifier.shakespeare.wtf sichtbar.' });
+      toast({ title: '✅ Online verifiziert', description: 'Eintrag auf der Website eingetragen.' });
     } catch (e) {
       setVerifyState('error');
       toast({ title: 'Fehler', description: String(e), variant: 'destructive' });
@@ -311,51 +328,75 @@ function OnlineActions({ scan, verify }: { scan: ScanResult; verify: VerifyResul
     }
   };
 
-  return (
-    <div className="grid grid-cols-2 gap-3">
-      {/* Online verifizieren */}
-      <Button
-        onClick={handleVerify}
-        disabled={verifyState === 'loading' || verifyState === 'done'}
-        className={cn(
-          'flex items-center gap-2 h-12 text-sm font-bold rounded-xl border transition-all',
-          verifyState === 'done'
-            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-            : 'bg-blue-500/15 border-blue-500/35 text-blue-300 hover:bg-blue-500/25',
-        )}
-        variant="outline"
-      >
-        {verifyState === 'loading' ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : verifyState === 'done' ? (
-          <CheckCircle className="w-4 h-4" />
-        ) : (
-          <Globe className="w-4 h-4" />
-        )}
-        {verifyState === 'done' ? 'Eingetragen!' : 'Online verifizieren'}
-      </Button>
+  const anyDone = verifyState === 'done' || reloadState === 'done';
 
-      {/* Aufladen */}
-      <Button
-        onClick={handleReload}
-        disabled={reloadState === 'loading' || reloadState === 'done'}
-        className={cn(
-          'flex items-center gap-2 h-12 text-sm font-bold rounded-xl border transition-all',
-          reloadState === 'done'
-            ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-            : 'bg-amber-500/10 border-amber-500/25 text-amber-300 hover:bg-amber-500/20',
-        )}
-        variant="outline"
-      >
-        {reloadState === 'loading' ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : reloadState === 'done' ? (
-          <CheckCircle className="w-4 h-4" />
-        ) : (
-          <Upload className="w-4 h-4" />
-        )}
-        {reloadState === 'done' ? 'Angefordert!' : 'Aufladen'}
-      </Button>
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-3">
+        {/* Online verifizieren */}
+        <Button
+          onClick={handleVerify}
+          disabled={verifyState === 'loading' || verifyState === 'done'}
+          className={cn(
+            'flex items-center gap-2 h-12 text-sm font-bold rounded-xl border transition-all',
+            verifyState === 'done'
+              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+              : verifyState === 'error'
+              ? 'bg-red-500/15 border-red-500/35 text-red-300 hover:bg-red-500/25'
+              : 'bg-blue-500/15 border-blue-500/35 text-blue-300 hover:bg-blue-500/25',
+          )}
+          variant="outline"
+        >
+          {verifyState === 'loading' ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : verifyState === 'done' ? (
+            <CheckCircle className="w-4 h-4" />
+          ) : (
+            <Globe className="w-4 h-4" />
+          )}
+          {verifyState === 'done' ? 'Eingetragen!' : verifyState === 'error' ? 'Fehler – Retry' : 'Online verifizieren'}
+        </Button>
+
+        {/* Aufladen */}
+        <Button
+          onClick={handleReload}
+          disabled={reloadState === 'loading' || reloadState === 'done'}
+          className={cn(
+            'flex items-center gap-2 h-12 text-sm font-bold rounded-xl border transition-all',
+            reloadState === 'done'
+              ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+              : reloadState === 'error'
+              ? 'bg-red-500/15 border-red-500/35 text-red-300 hover:bg-red-500/25'
+              : 'bg-amber-500/10 border-amber-500/25 text-amber-300 hover:bg-amber-500/20',
+          )}
+          variant="outline"
+        >
+          {reloadState === 'loading' ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : reloadState === 'done' ? (
+            <CheckCircle className="w-4 h-4" />
+          ) : (
+            <Upload className="w-4 h-4" />
+          )}
+          {reloadState === 'done' ? 'Angefordert!' : reloadState === 'error' ? 'Fehler – Retry' : 'Aufladen'}
+        </Button>
+      </div>
+
+      {/* "Website anschauen" – erscheint nach jedem erfolgreichen Klick */}
+      {anyDone && (
+        <a
+          href={WEBSITE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            'flex items-center justify-center gap-2 w-full h-11 rounded-xl border text-sm font-bold transition-all',
+            'bg-white/5 border-white/15 text-slate-300 hover:bg-white/10 hover:border-white/25',
+          )}
+        >
+          <Globe className="w-4 h-4 text-slate-400" />
+          Website anschauen
+        </a>
+      )}
     </div>
   );
 }
