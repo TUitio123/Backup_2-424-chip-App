@@ -30,10 +30,11 @@ export function usePaymentConfirmed(uid: string | null, since?: number) {
   const { nostr } = useNostr();
 
   return useQuery({
-    queryKey: ['payment-confirmed', uid, since],
+    queryKey: ['payment-confirmed', uid],
     enabled: !!uid,
     queryFn: async (c) => {
-      const sinceTs = since ?? Math.floor(Date.now() / 1000) - 300; // default: letzte 5 min
+      // 60 Sekunden Puffer damit Events die kurz vor dem Scan kamen nicht verpasst werden
+      const sinceTs = (since ?? Math.floor(Date.now() / 1000)) - 60;
       const events = await nostr.query(
         [{ kinds: [KIND_PAYMENT_CONFIRMED], '#t': [APP_TAG], since: sinceTs, limit: 50 }],
         { signal: c.signal },

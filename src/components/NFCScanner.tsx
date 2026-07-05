@@ -1106,19 +1106,20 @@ export function NFCScanner() {
 
   const chip = lastScan ? lookupChip(lastScan.uid) : null;
 
-  // Zeitstempel des letzten Scans — nur Events DANACH zaehlen als "bezahlt"
-  const scanTimestamp = useRef(Math.floor(Date.now() / 1000));
+  // Zeitstempel des letzten Scans — nur Kind-3493 Events DANACH zaehlen
+  const [scanTimestamp, setScanTimestamp] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
-    if (lastScan) scanTimestamp.current = Math.floor(Date.now() / 1000);
+    if (lastScan) setScanTimestamp(Math.floor(Date.now() / 1000));
   }, [lastScan]);
 
   // Payment confirmed hook — nur Events NACH dem Scan-Zeitpunkt
   const { data: paymentEvent } = usePaymentConfirmed(
     lastScan?.uid ?? null,
-    scanTimestamp.current,
+    scanTimestamp,
   );
 
   useEffect(() => {
+    // paymentEvent existiert UND Invoice-Panel ist offen → Zahlung eingegangen
     if (paymentEvent && showInvoice && !showWriteValid) {
       setShowWriteValid(true);
       setShowInvoice(false);
