@@ -43,7 +43,7 @@ interface Ntag424Plugin {
   readStatus(options: { uid: string; appMasterKey: string; fileReadKey: string }): Promise<ReadStatusResult>;
   addListener(
     event: 'tagRead',
-    handler: (data: { uid: string; chipStatus: string; chipSats: number; debug: string }) => void
+    handler: (data: { uid: string; chipStatus: string; chipSats: number; ndefText: string; debug: string }) => void
   ): Promise<{ remove: () => void }>;
   removeAllListeners(): Promise<void>;
 }
@@ -57,10 +57,12 @@ export type ChipStatus = 'valid' | 'invalid' | 'entwertenbeantragt';
 
 export interface ScanResult {
   uid: string;
-  /** Status direkt vom Chip gelesen (File 02) */
+  /** Status direkt vom NDEF-Text-Record gelesen ("valid" / "invalid" / "entwertenbeantragt") */
   chipStatus: ChipStatus;
-  /** Sats direkt vom Chip gelesen (File 03), 0 wenn nicht geschrieben */
+  /** Sats direkt vom NDEF-Text-Record gelesen (Tausender-Punkt entfernt), 0 wenn kein Record */
   chipSats: number;
+  /** Roher NDEF-Text-Inhalt, z.B. "2.100;valid" */
+  ndefText: string;
   timestamp: number;
   debug?: string;
 }
@@ -95,6 +97,7 @@ export async function startNativeScan(
         uid: data.uid,
         chipStatus,
         chipSats: typeof data.chipSats === 'number' ? data.chipSats : 0,
+        ndefText: data.ndefText ?? '',
         timestamp: Date.now(),
         debug: data.debug,
       });
@@ -116,7 +119,9 @@ export async function stopNativeScan(): Promise<void> {
 // ─── Status schreiben / lesen ─────────────────────────────────────────────────
 
 /**
- * Schreibt den Status-String auf den Chip (File 02).
+ * Schreibt den Status-String auf den Chip (NDEF Text Record).
+ * Der Sats-Teil des bestehenden NDEF-Textes wird beibehalten.
+ * Keys werden für NDEF nicht benötigt, bleiben für API-Kompatibilität.
  */
 export async function writeChipStatus(
   uid: string,
@@ -140,7 +145,9 @@ export async function writeChipStatus(
 }
 
 /**
- * Liest den Status-String zurück vom Chip (Verifikation nach Schreiben).
+ * Liest den Status zurück vom Chip (NDEF Text Record).
+ * Zum Verifizieren nach dem Schreiben.
+ * Keys werden für NDEF nicht benötigt, bleiben für API-Kompatibilität.
  */
 export async function readChipStatus(
   uid: string,

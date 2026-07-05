@@ -178,6 +178,18 @@ function ResultCard({ scan, chip }: { scan: ScanResult; chip: ChipEntry | null }
         <ChipStatusBadge status={scan.chipStatus} />
       </div>
 
+      {/* Raw NDEF text */}
+      {scan.ndefText && (
+        <div className="rounded-lg px-2.5 py-1.5"
+          style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <span className="text-[9px] uppercase tracking-wider font-bold mr-2"
+            style={{ color: 'rgba(255,255,255,0.2)' }}>NDEF:</span>
+          <span className="font-mono text-[10px]" style={{ color: 'rgba(255,255,255,0.5)' }}>
+            {scan.ndefText}
+          </span>
+        </div>
+      )}
+
       {/* Website link */}
       {chip && (
         <a

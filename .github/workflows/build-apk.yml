@@ -88,8 +88,12 @@ jobs:
         run: |
           cat > android/app/src/main/java/com/ntag424scanner/app/Ntag424Plugin.java << 'JAVAEOF'
           package com.ntag424scanner.app;
+
           import android.nfc.Tag;
-          import android.nfc.tech.IsoDep;
+          import android.nfc.NdefMessage;
+          import android.nfc.NdefRecord;
+          import android.nfc.tech.Ndef;
+          import android.nfc.tech.NdefFormatable;
           import android.util.Log;
           import com.getcapacitor.JSObject;
           import com.getcapacitor.Plugin;
@@ -98,21 +102,27 @@ jobs:
           import com.getcapacitor.annotation.CapacitorPlugin;
           import java.nio.charset.StandardCharsets;
           import java.util.Arrays;
+          import java.util.Locale;
 
           /**
-           * Ntag424Plugin — NTAG 424 DNA NFC Scanner + Status-Writer
+           * Ntag424Plugin — NTAG 424 DNA NFC Scanner
+           *
+           * Liest den NDEF-Text-Record vom Chip.
+           * Format des Text-Records: "<sats>;<status>"
+           *   Beispiel: "2.100;valid"  (Punkt = Tausender-Trenner, wird beim Parsen entfernt)
+           *   Beispiel: "11.000;invalid"
+           *   Beispiel: "13.500;entwertenbeantragt"
            *
            * tagRead event payload:
            *   uid         : String  — Chip-UID (hex, uppercase, no colons)
-           *   chipStatus  : String  — Status aus File 02 ("valid" / "invalid" / "entwertenbeantragt")
-           *   chipSats    : int     — Sats aus File 03 (raw int, 0 wenn nicht geschrieben)
-           *   debug       : String  — APDU dump log (alle Befehle + Antworten)
+           *   chipStatus  : String  — "valid" / "invalid" / "entwertenbeantragt"
+           *   chipSats    : int     — Sats aus NDEF-Text-Record (0 wenn kein Record)
+           *   ndefText    : String  — Roher NDEF-Text-Inhalt (z.B. "2.100;valid")
+           *   debug       : String  — Dump-Log aller Operationen
            *
-           * Methods:
-           *   startScan()   — beginnt NFC-Scan-Modus
-           *   stopScan()    — beendet Scan-Modus
-           *   writeStatus() — schreibt Status-String in File 02
-           *   readStatus()  — liest Status-String aus File 02
+           * Schreiben (writeStatus):
+           *   Liest aktuellen NDEF-Text, ersetzt den Status-Teil, schreibt zurück.
+           *   Format bleibt gleich: "<sats>;<neuerStatus>"
            */
           @CapacitorPlugin(name = "Ntag424")
           public class Ntag424Plugin extends Plugin {
@@ -120,10 +130,6 @@ jobs:
               private boolean scanning = false;
               private PluginCall pendingWriteCall = null;
               private PluginCall pendingReadCall  = null;
-
-              private static final byte[] DF_NAME = {
-                  (byte)0xD2,(byte)0x76,(byte)0x00,(byte)0x00,(byte)0x85,(byte)0x01,(byte)0x01
-              };
 
               @PluginMethod
               public void startScan(PluginCall call) {
@@ -153,205 +159,272 @@ jobs:
 
               public void handleTag(Tag tag) {
                   String uid = toHex(tag.getId()).toUpperCase();
-                  IsoDep iso = IsoDep.get(tag);
-                  if (iso == null) {
-                      emitResult(uid, "UNKNOWN", 0, "NO_ISODEP");
-                      return;
-                  }
+                  Log.i(TAG, "handleTag uid=" + uid);
 
                   if (pendingWriteCall != null) {
                       final PluginCall c = pendingWriteCall; pendingWriteCall = null;
-                      new Thread(() -> doWrite(iso, uid, c)).start();
+                      new Thread(() -> doWrite(tag, uid, c)).start();
                       return;
                   }
                   if (pendingReadCall != null) {
                       final PluginCall c = pendingReadCall; pendingReadCall = null;
-                      new Thread(() -> doRead(iso, uid, c)).start();
+                      new Thread(() -> doReadForCall(tag, uid, c)).start();
                       return;
                   }
                   if (!scanning) return;
-                  new Thread(() -> doFullScan(iso, uid)).start();
+                  new Thread(() -> doFullScan(tag, uid)).start();
               }
 
-              // ── Full scan: reads Status (File 02) + Sats (File 03) ────────────
-              private void doFullScan(IsoDep iso, String uid) {
+              // ── Full scan: reads NDEF Text Record ────────────────────────────────
+              private void doFullScan(Tag tag, String uid) {
                   StringBuilder dump = new StringBuilder();
                   dump.append("=== SCAN ").append(uid).append(" ===\n");
-                  try {
-                      iso.connect();
-                      iso.setTimeout(8000);
 
-                      // 1. SELECT Application
-                      if (!selectApp(iso, uid, dump)) {
-                          emitResult(uid, "valid", 0, dump.toString());
-                          return;
-                      }
+                  NdefContent content = readNdef(tag, dump);
+                  dump.append("=== RESULT: text='").append(content.rawText)
+                      .append("' sats=").append(content.sats)
+                      .append(" status=").append(content.status).append(" ===\n");
 
-                      // 2. Read File 02 — Status string
-                      String chipStatus = readFile02(iso, uid, dump);
-
-                      // 3. Read File 03 — Sats (4-byte big-endian int)
-                      int chipSats = readFile03(iso, uid, dump);
-
-                      dump.append("=== RESULT status=").append(chipStatus)
-                          .append(" sats=").append(chipSats).append(" ===\n");
-
-                      Log.i(TAG, dump.toString());
-                      emitResult(uid, chipStatus, chipSats, dump.toString());
-
-                  } catch (Exception e) {
-                      dump.append("EXCEPTION: ").append(e.getMessage()).append("\n");
-                      Log.e(TAG, dump.toString());
-                      emitResult(uid, "valid", 0, dump.toString());
-                  } finally {
-                      try { iso.close(); } catch (Exception ignored) {}
-                  }
+                  Log.i(TAG, dump.toString());
+                  emitResult(uid, content.status, content.sats, content.rawText, dump.toString());
               }
 
-              // ── Read File 02 (Status string, 32 bytes) ────────────────────────
-              private String readFile02(IsoDep iso, String uid, StringBuilder dump) {
-                  try {
-                      // ReadData: CLA=90 INS=AD P1=00 P2=00 Lc=07 [FileNo=02 Offset=000000 Len=200000] Le=00
-                      byte[] cmd = { (byte)0x90,(byte)0xAD,0x00,0x00,0x07, 0x02,0x00,0x00,0x00,0x20,0x00,0x00,0x00 };
-                      dump.append("ReadFile02 CMD: ").append(toHex(cmd)).append("\n");
-                      byte[] resp = iso.transceive(cmd);
-                      dump.append("ReadFile02 RSP: ").append(toHex(resp)).append("\n");
-                      if (resp == null || resp.length < 2) return "valid";
-                      int sw1 = resp[resp.length-2]&0xFF, sw2 = resp[resp.length-1]&0xFF;
-                      if (sw1==0x91 && sw2==0x00) {
-                          byte[] data = Arrays.copyOf(resp, resp.length-2);
-                          int len = data.length;
-                          while (len>0 && data[len-1]==0) len--;
-                          String s = new String(data, 0, len, StandardCharsets.UTF_8).trim().toLowerCase();
-                          if (s.equals("invalid") || s.equals("entwertenbeantragt")) return s;
-                          return "valid";
-                      }
-                      dump.append("ReadFile02: SW=").append(String.format("%02X%02X",sw1,sw2)).append(" (no status written yet)\n");
-                      return "valid";
-                  } catch (Exception e) {
-                      dump.append("ReadFile02 ERR: ").append(e.getMessage()).append("\n");
-                      return "valid";
-                  }
+              // ── Read NDEF for readStatus() call ──────────────────────────────────
+              private void doReadForCall(Tag tag, String uid, PluginCall call) {
+                  StringBuilder dump = new StringBuilder();
+                  dump.append("=== READ STATUS ").append(uid).append(" ===\n");
+                  NdefContent content = readNdef(tag, dump);
+                  JSObject r = new JSObject();
+                  r.put("success", true);
+                  r.put("status", content.status);
+                  r.put("sats", content.sats);
+                  r.put("ndefText", content.rawText);
+                  r.put("dump", dump.toString());
+                  call.resolve(r);
               }
 
-              // ── Read File 03 (Sats, 4-byte big-endian) ────────────────────────
-              private int readFile03(IsoDep iso, String uid, StringBuilder dump) {
-                  try {
-                      // ReadData: CLA=90 INS=AD P1=00 P2=00 Lc=07 [FileNo=03 Offset=000000 Len=040000] Le=00
-                      byte[] cmd = { (byte)0x90,(byte)0xAD,0x00,0x00,0x07, 0x03,0x00,0x00,0x00,0x04,0x00,0x00,0x00 };
-                      dump.append("ReadFile03 CMD: ").append(toHex(cmd)).append("\n");
-                      byte[] resp = iso.transceive(cmd);
-                      dump.append("ReadFile03 RSP: ").append(toHex(resp)).append("\n");
-                      if (resp == null || resp.length < 6) return 0;
-                      int sw1 = resp[resp.length-2]&0xFF, sw2 = resp[resp.length-1]&0xFF;
-                      if (sw1==0x91 && sw2==0x00 && resp.length >= 6) {
-                          int sats = ((resp[0]&0xFF)<<24)|((resp[1]&0xFF)<<16)|((resp[2]&0xFF)<<8)|(resp[3]&0xFF);
-                          return sats;
-                      }
-                      return 0;
-                  } catch (Exception e) {
-                      dump.append("ReadFile03 ERR: ").append(e.getMessage()).append("\n");
-                      return 0;
-                  }
-              }
-
-              // ── Write File 02 (Status) ────────────────────────────────────────
-              private void doWrite(IsoDep iso, String uid, PluginCall call) {
+              // ── Write NDEF: update only the status part ───────────────────────────
+              private void doWrite(Tag tag, String uid, PluginCall call) {
                   StringBuilder dump = new StringBuilder();
                   dump.append("=== WRITE STATUS ").append(uid).append(" ===\n");
                   try {
-                      iso.connect(); iso.setTimeout(10000);
-                      String statusToWrite = call.getString("status", "valid");
-                      dump.append("Writing status: ").append(statusToWrite).append("\n");
-                      byte[] statusBytes = statusToWrite.getBytes(StandardCharsets.UTF_8);
-                      if (statusBytes.length > 32) statusBytes = Arrays.copyOf(statusBytes, 32);
-                      byte[] payload = new byte[32];
-                      System.arraycopy(statusBytes, 0, payload, 0, statusBytes.length);
+                      String newStatus = call.getString("status", "valid");
+                      dump.append("Target status: ").append(newStatus).append("\n");
 
-                      if (!selectApp(iso, uid, dump)) {
-                          resolveWriteError(call, "SELECT_FAILED", "App-Selektion fehlgeschlagen\n"+dump); return;
+                      // First: read current NDEF to get current sats
+                      NdefContent current = readNdef(tag, dump);
+                      dump.append("Current: text='").append(current.rawText)
+                          .append("' sats=").append(current.sats)
+                          .append(" status=").append(current.status).append("\n");
+
+                      // Build new text: keep sats, replace status
+                      // If current text has sats, format: "sats;newStatus"
+                      // If no text yet, use sats from call param or 0
+                      String satsStr = current.satsString.isEmpty() ? "0" : current.satsString;
+                      String newText = satsStr + ";" + newStatus;
+                      dump.append("New NDEF text: '").append(newText).append("'\n");
+
+                      // Write NDEF
+                      Ndef ndef = Ndef.get(tag);
+                      if (ndef == null) {
+                          resolveWriteError(call, "NO_NDEF", "Chip unterstuetzt kein NDEF\n" + dump);
+                          return;
                       }
 
-                      // WriteData File 02
-                      byte[] writeCmd = new byte[13 + 32];
-                      writeCmd[0]=(byte)0x90; writeCmd[1]=(byte)0x8D;
-                      writeCmd[2]=0x00; writeCmd[3]=0x00; writeCmd[4]=(byte)(7+32);
-                      writeCmd[5]=0x02; writeCmd[6]=0x00; writeCmd[7]=0x00; writeCmd[8]=0x00;
-                      writeCmd[9]=(byte)32; writeCmd[10]=0x00; writeCmd[11]=0x00;
-                      System.arraycopy(payload, 0, writeCmd, 12, 32);
-                      writeCmd[44]=0x00;
-                      dump.append("WriteFile02 CMD: ").append(toHex(writeCmd)).append("\n");
-                      byte[] wr = iso.transceive(writeCmd);
-                      dump.append("WriteFile02 RSP: ").append(toHex(wr)).append("\n");
+                      ndef.connect();
+                      try {
+                          if (!ndef.isWritable()) {
+                              resolveWriteError(call, "READ_ONLY", "Chip ist schreibgeschuetzt\n" + dump);
+                              return;
+                          }
 
-                      if (isNative9100(wr)) {
-                          JSObject r = new JSObject();
-                          r.put("success", true); r.put("dump", dump.toString());
-                          call.resolve(r);
-                      } else {
-                          resolveWriteError(call, "WRITE_FAILED", "SW="+toHex(wr)+"\n"+dump);
-                      }
-                  } catch (Exception e) {
-                      resolveWriteError(call, "EXCEPTION", e.getMessage()+"\n"+dump);
-                  } finally {
-                      try { iso.close(); } catch (Exception ignored) {}
-                  }
-              }
+                          NdefRecord textRecord = createTextRecord("de", newText);
+                          // Also keep the URL record if it existed
+                          NdefMessage newMsg;
+                          if (current.urlRecord != null) {
+                              newMsg = new NdefMessage(new NdefRecord[]{ current.urlRecord, textRecord });
+                          } else {
+                              newMsg = new NdefMessage(new NdefRecord[]{ textRecord });
+                          }
 
-              // ── Read File 02 via readStatus call ──────────────────────────────
-              private void doRead(IsoDep iso, String uid, PluginCall call) {
-                  StringBuilder dump = new StringBuilder();
-                  dump.append("=== READ STATUS ").append(uid).append(" ===\n");
-                  try {
-                      iso.connect(); iso.setTimeout(5000);
-                      if (!selectApp(iso, uid, dump)) {
-                          resolveReadError(call, "SELECT_FAILED", "App-Selektion fehlgeschlagen\n"+dump); return;
+                          int msgSize = newMsg.toByteArray().length;
+                          dump.append("Writing NDEF message ").append(msgSize).append(" bytes\n");
+
+                          ndef.writeNdefMessage(newMsg);
+                          dump.append("Write OK\n");
+                      } finally {
+                          try { ndef.close(); } catch (Exception ignored) {}
                       }
-                      String status = readFile02(iso, uid, dump);
+
+                      // Verify: read back
+                      NdefContent verify = readNdef(tag, dump);
+                      dump.append("Verify: status=").append(verify.status).append(" text='").append(verify.rawText).append("'\n");
+
                       JSObject r = new JSObject();
-                      r.put("success", true); r.put("status", status); r.put("dump", dump.toString());
+                      r.put("success", true);
+                      r.put("statusWritten", newStatus);
+                      r.put("statusVerified", verify.status);
+                      r.put("ndefText", verify.rawText);
+                      r.put("dump", dump.toString());
                       call.resolve(r);
+
                   } catch (Exception e) {
-                      resolveReadError(call, "EXCEPTION", e.getMessage()+"\n"+dump);
-                  } finally {
-                      try { iso.close(); } catch (Exception ignored) {}
+                      dump.append("EXCEPTION: ").append(e.getMessage()).append("\n");
+                      resolveWriteError(call, "EXCEPTION", e.getMessage() + "\n" + dump);
                   }
               }
 
-              // ── Helpers ───────────────────────────────────────────────────────
-              private boolean selectApp(IsoDep iso, String uid, StringBuilder dump) throws Exception {
-                  byte[] cmd = new byte[5+DF_NAME.length+1];
-                  cmd[0]=0x00; cmd[1]=(byte)0xA4; cmd[2]=0x04; cmd[3]=0x00; cmd[4]=(byte)DF_NAME.length;
-                  System.arraycopy(DF_NAME,0,cmd,5,DF_NAME.length); cmd[cmd.length-1]=0x00;
-                  dump.append("SelectApp CMD: ").append(toHex(cmd)).append("\n");
-                  byte[] resp = iso.transceive(cmd);
-                  dump.append("SelectApp RSP: ").append(toHex(resp)).append("\n");
-                  return resp!=null && resp.length>=2 && resp[resp.length-2]==(byte)0x90 && resp[resp.length-1]==(byte)0x00;
+              // ── Read NDEF text record ─────────────────────────────────────────────
+              private NdefContent readNdef(Tag tag, StringBuilder dump) {
+                  NdefContent result = new NdefContent();
+                  try {
+                      Ndef ndef = Ndef.get(tag);
+                      if (ndef == null) {
+                          dump.append("NDEF: not available on this tag\n");
+                          return result;
+                      }
+                      ndef.connect();
+                      try {
+                          NdefMessage msg = ndef.getNdefMessage();
+                          if (msg == null) {
+                              msg = ndef.getCachedNdefMessage();
+                          }
+                          if (msg == null) {
+                              dump.append("NDEF: no message on chip\n");
+                              return result;
+                          }
+                          NdefRecord[] records = msg.getRecords();
+                          dump.append("NDEF: ").append(records.length).append(" record(s)\n");
+
+                          for (int i = 0; i < records.length; i++) {
+                              NdefRecord rec = records[i];
+                              dump.append("  Record[").append(i).append("]: TNF=")
+                                  .append(rec.getTnf()).append(" type=")
+                                  .append(new String(rec.getType())).append("\n");
+
+                              if (rec.getTnf() == NdefRecord.TNF_WELL_KNOWN &&
+                                  Arrays.equals(rec.getType(), NdefRecord.RTD_URI)) {
+                                  result.urlRecord = rec;
+                                  dump.append("  -> URL record preserved\n");
+                              }
+
+                              if (rec.getTnf() == NdefRecord.TNF_WELL_KNOWN &&
+                                  Arrays.equals(rec.getType(), NdefRecord.RTD_TEXT)) {
+                                  String text = parseTextRecord(rec);
+                                  dump.append("  -> TEXT: '").append(text).append("'\n");
+                                  result.rawText = text;
+                                  parseChipText(text, result);
+                              }
+                          }
+                      } finally {
+                          try { ndef.close(); } catch (Exception ignored) {}
+                      }
+                  } catch (Exception e) {
+                      dump.append("NDEF ERR: ").append(e.getMessage()).append("\n");
+                  }
+                  return result;
+              }
+
+              /**
+               * Parses NDEF text record payload.
+               * Format: [status byte][lang bytes][text bytes]
+               * Status byte: bit7=encoding (0=UTF-8,1=UTF-16), bits5-0=lang length
+               */
+              private String parseTextRecord(NdefRecord record) {
+                  try {
+                      byte[] payload = record.getPayload();
+                      if (payload == null || payload.length == 0) return "";
+                      int statusByte = payload[0] & 0xFF;
+                      int langLen = statusByte & 0x3F;
+                      boolean utf16 = (statusByte & 0x80) != 0;
+                      if (1 + langLen > payload.length) return "";
+                      String charset = utf16 ? "UTF-16" : "UTF-8";
+                      return new String(payload, 1 + langLen, payload.length - 1 - langLen,
+                          java.nio.charset.Charset.forName(charset));
+                  } catch (Exception e) {
+                      return "";
+                  }
+              }
+
+              /**
+               * Parses chip text format: "sats;status"
+               * sats may have dots as thousand separators: "2.100" → 2100
+               * Also handles plain "status" without sats (legacy).
+               */
+              private void parseChipText(String text, NdefContent result) {
+                  if (text == null || text.isEmpty()) return;
+                  String t = text.trim();
+                  if (t.contains(";")) {
+                      String[] parts = t.split(";", 2);
+                      result.satsString = parts[0].trim();
+                      String statusRaw = parts[1].trim().toLowerCase(Locale.ROOT);
+                      // Parse sats: remove dots (thousand separators) and parse
+                      try {
+                          String satsClean = result.satsString.replace(".", "").replace(",", "");
+                          result.sats = Integer.parseInt(satsClean);
+                      } catch (NumberFormatException e) {
+                          result.sats = 0;
+                      }
+                      result.status = normalizeStatus(statusRaw);
+                  } else {
+                      // Legacy: plain status string without sats
+                      result.status = normalizeStatus(t.toLowerCase(Locale.ROOT));
+                  }
+              }
+
+              private String normalizeStatus(String s) {
+                  if ("invalid".equals(s) || "entwertenbeantragt".equals(s)) return s;
+                  return "valid";
+              }
+
+              /**
+               * Creates an NDEF Text record.
+               * @param lang  ISO 639 language code, e.g. "de"
+               * @param text  The text content
+               */
+              private NdefRecord createTextRecord(String lang, String text) {
+                  byte[] langBytes = lang.getBytes(StandardCharsets.US_ASCII);
+                  byte[] textBytes = text.getBytes(StandardCharsets.UTF_8);
+                  byte[] payload = new byte[1 + langBytes.length + textBytes.length];
+                  payload[0] = (byte) (langBytes.length & 0x3F); // UTF-8, langLen
+                  System.arraycopy(langBytes, 0, payload, 1, langBytes.length);
+                  System.arraycopy(textBytes, 0, payload, 1 + langBytes.length, textBytes.length);
+                  return new NdefRecord(NdefRecord.TNF_WELL_KNOWN, NdefRecord.RTD_TEXT, new byte[0], payload);
               }
 
               private static String toHex(byte[] b) {
-                  if (b==null) return "null";
-                  StringBuilder sb=new StringBuilder();
-                  for (byte x:b) sb.append(String.format("%02X",x));
+                  if (b == null) return "null";
+                  StringBuilder sb = new StringBuilder();
+                  for (byte x : b) sb.append(String.format("%02X", x));
                   return sb.toString();
               }
-              private boolean isNative9100(byte[] r) {
-                  return r!=null && r.length>=2 && r[r.length-2]==(byte)0x91 && r[r.length-1]==(byte)0x00;
-              }
-              private void emitResult(String uid, String chipStatus, int chipSats, String dump) {
+
+              private void emitResult(String uid, String chipStatus, int chipSats, String ndefText, String dump) {
                   JSObject r = new JSObject();
                   r.put("uid", uid);
                   r.put("chipStatus", chipStatus);
                   r.put("chipSats", chipSats);
+                  r.put("ndefText", ndefText);
                   r.put("debug", dump);
                   notifyListeners("tagRead", r);
-                  Log.i(TAG, "EMIT uid="+uid+" status="+chipStatus+" sats="+chipSats);
+                  Log.i(TAG, "EMIT uid=" + uid + " status=" + chipStatus + " sats=" + chipSats + " text='" + ndefText + "'");
               }
+
               private void resolveWriteError(PluginCall call, String code, String msg) {
-                  JSObject r=new JSObject(); r.put("success",false); r.put("errorCode",code); r.put("errorMessage",msg); call.resolve(r);
+                  JSObject r = new JSObject();
+                  r.put("success", false);
+                  r.put("errorCode", code);
+                  r.put("errorMessage", msg);
+                  call.resolve(r);
               }
-              private void resolveReadError(PluginCall call, String code, String msg) {
-                  JSObject r=new JSObject(); r.put("success",false); r.put("errorCode",code); r.put("errorMessage",msg); call.resolve(r);
+
+              // ── Inner class for NDEF read result ─────────────────────────────────
+              private static class NdefContent {
+                  String rawText   = "";
+                  String status    = "valid";
+                  int sats         = 0;
+                  String satsString = "";
+                  NdefRecord urlRecord = null;
               }
           }
           JAVAEOF
@@ -368,6 +441,8 @@ jobs:
           cat > android/app/src/main/res/xml/nfc_tech_filter.xml << 'XMLEOF'
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
+              <tech-list><tech>android.nfc.tech.Ndef</tech></tech-list>
+              <tech-list><tech>android.nfc.tech.NdefFormatable</tech></tech-list>
               <tech-list><tech>android.nfc.tech.IsoDep</tech></tech-list>
               <tech-list><tech>android.nfc.tech.NfcA</tech></tech-list>
           </resources>
