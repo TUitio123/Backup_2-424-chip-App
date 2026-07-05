@@ -1,10 +1,11 @@
 # NTAG 424 TT Scanner — Android-App
 
-Android-App zum Scannen von physischen Bitcoin-Scheinen. Liest NXP NTAG 424 DNA TagTamper NFC-Chips via ISO-DEP APDU, prüft den Tamper-Status und kann Verifikationsergebnisse über das Nostr-Protokoll öffentlich protokollieren.
+Android-App zum Scannen von physischen Bitcoin-Scheinen. Liest NXP NTAG 424 DNA TagTamper NFC-Chips via ISO-DEP APDU, prueft den Tamper-Status und kann Verifikationsergebnisse ueber das Nostr-Protokoll oeffentlich protokollieren.
 
-**Primäres Repository:** https://github.com/TUitio123/ntag424-tt-scanner-v2 (privat)  
-**Dieses Repository:** Backup-Kopie, identischer Stand, nichts verändert.  
-**Zugehörige Website:** https://Testtest123.shakespeare.wtf
+**Primaeres Repository:** https://github.com/TUitio123/ntag424-tt-scanner-v2 (privat)  
+**Dieses Repository:** Backup-Kopie.  
+**Zugehoerige Website:** https://backuphip.shakespeare.wtf  
+**Letzter Sync:** 05.07.2026 (KI-Bot, Shakespeare backup-424-sync)
 
 ---
 
@@ -36,16 +37,21 @@ Die aktuelle APK wird automatisch bei jedem Push auf `main` via GitHub Actions g
 
 Diese Chips sind in der aktuellen App-Version eingebettet:
 
-| # | UID | Betrag |
-|---|-----|--------|
-| 1 | `04C1685ABF1D90` | 11.000 sats |
-| 2 | `04AC695ABF1D90` | 11.500 sats |
-| 3 | `04C6695ABF1D90` | 12.000 sats |
-| 4 | `04BD695ABF1D90` | 12.500 sats |
-| 5 | `04AE695ABF1D90` | 13.000 sats |
-| 6 | `04AD695ABF1D90` | 13.500 sats |
-| 7 | `04BC695ABF1D90` | 14.000 sats |
-| 8 | `0493695ABF1D90` | 15.000 sats |
+| # | UID | Betrag | Ausgegeben |
+|---|-----|--------|-----------|
+| 1 | `04C1685ABF1D90` | 1.100 sats | 04.07.2026 |
+| 2 | `04AC695ABF1D90` | 1.150 sats | 04.07.2026 |
+| 3 | `04C6695ABF1D90` | 1.200 sats | 04.07.2026 |
+| 4 | `04BD695ABF1D90` | 1.250 sats | 04.07.2026 |
+| 5 | `04AE695ABF1D90` | 1.300 sats | 04.07.2026 |
+| 6 | `04AD695ABF1D90` | 1.350 sats | 04.07.2026 |
+| 7 | `04BC695ABF1D90` | 1.400 sats | 04.07.2026 |
+| 8 | `0493695ABF1D90` | 1.500 sats | 04.07.2026 |
+| 9 | `0492695ABF1D90` | 1.100 sats | 05.07.2026 |
+| 10 | `04A4695ABF1D90` | 2.100 sats | 05.07.2026 |
+| 11 | `0495695ABF1D90` | 3.100 sats | 05.07.2026 |
+
+**Betraege sind 10% der Original-Werte** (Testbetrieb).
 
 Die Chip-Daten sind in zwei Stellen definiert (müssen synchron bleiben):
 - `chips.json` — menschenlesbare Quelldatei

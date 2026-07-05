@@ -1,16 +1,40 @@
 # AGENTS.md — NTAG 424 TT Scanner App
 
-Dieses Dokument richtet sich an KI-Assistenten (Claude, GPT, etc.) die an diesem Projekt arbeiten. Es erklärt alle kritischen Abhängigkeiten, den Build-Prozess, häufige Fallstricke und gibt präzise Anweisungen für häufige Aufgaben.
+Dieses Dokument richtet sich an KI-Assistenten (Claude, GPT, etc.) die an diesem Projekt arbeiten. Es erklaert alle kritischen Abhaengigkeiten, den Build-Prozess, haeufige Fallstricke und gibt praezise Anweisungen fuer haeufige Aufgaben.
 
 ---
 
-## Projektüberblick
+## Sync-Protokoll (05.07.2026)
 
-Android-App (Capacitor + React) zum Verifizieren physischer Bitcoin-Scheine via NFC. Der Chip-Typ ist NXP NTAG 424 DNA TagTamper (ISO 14443-4). Die App kommuniziert über das Nostr-Protokoll mit einer öffentlichen Website.
+### Letzter Sync durchgefuehrt von: KI-Bot (Claude Opus 4.6, Shakespeare, Projekt backup-424-sync)
+
+| Was | Status |
+|---|---|
+| `chips.json` | 11 Chips, 10%-Werte (1.100–3.100 sats) — KORREKT |
+| `chipRegistry.ts` | **AKTUALISIERT** — war noch 8 Chips mit alten Betraegen (11.000–15.000), jetzt 11 Chips synchron mit chips.json |
+| `generate-registry.cjs` | OK — generiert korrekt aus chips.json |
+| Key-Files in `/keys/` | 10 JSON-Dateien vorhanden — OK |
+| Kind-Nummern | 6129, 3491, 3492, 3493 — synchron mit Website |
+| `APP_TAG` | `bitcoin-note-verifier` — synchron mit Website |
+| `APP_SECRET_KEY` | Unveraendert — gleicher Pubkey wie vorher |
+| Entwert-Flow | App schreibt "invalid" auf Chip → sendet Kind-3492 mit Invoice → Website zahlt aus |
+| Website-URL in NFCScanner | `backuphip.shakespeare.wtf` |
+
+### Was noch fehlt / offen ist
+
+- Die APK wird beim naechsten Push automatisch via GitHub Actions neu gebaut
+- Die `chipRegistry.ts` wird ebenfalls via `generate-registry.cjs` ueberschrieben (jetzt identisch)
+- Key-Files fuer die 3 neuen Chips (`0492695ABF1D90`, `04A4695ABF1D90`, `0495695ABF1D90`) sind vorhanden
+
+---
+
+## Projektuebersicht
+
+Android-App (Capacitor + React) zum Verifizieren physischer Bitcoin-Scheine via NFC. Der Chip-Typ ist NXP NTAG 424 DNA TagTamper (ISO 14443-4). Die App kommuniziert ueber das Nostr-Protokoll mit einer oeffentlichen Website.
 
 **Stack:** React 19 + TypeScript + TailwindCSS 4 + Vite + Capacitor 8 + Java 21  
 **Template:** MKStack (Shakespeare-Plattform)  
-**Zugehörige Website:** https://backuphip.shakespeare.wtf
+**Zugehoerige Website:** https://backuphip.shakespeare.wtf
 
 ---
 
@@ -18,26 +42,42 @@ Android-App (Capacitor + React) zum Verifizieren physischer Bitcoin-Scheine via 
 
 ### `chips.json` ← HIER Chips pflegen
 ```json
-[{ "uid": "04C1685ABF1D90", "label": "11.000 sats", "info": "", "issuedAt": "04.07.2026" }]
+[{ "uid": "04C1685ABF1D90", "label": "1.100 sats", "sats": 1100, "status": "valid", "info": "", "issuedAt": "04.07.2026" }]
 ```
-**Einzige Quelldatei für Chip-Daten.** Alle anderen Stellen werden daraus generiert.
+**Einzige Quelldatei fuer Chip-Daten.** Alle anderen Stellen werden daraus generiert.
+
+Aktuell 11 Chips:
+
+| # | UID | Betrag | Ausgegeben |
+|---|-----|--------|-----------|
+| 1 | `04C1685ABF1D90` | 1.100 sats | 04.07.2026 |
+| 2 | `04AC695ABF1D90` | 1.150 sats | 04.07.2026 |
+| 3 | `04C6695ABF1D90` | 1.200 sats | 04.07.2026 |
+| 4 | `04BD695ABF1D90` | 1.250 sats | 04.07.2026 |
+| 5 | `04AE695ABF1D90` | 1.300 sats | 04.07.2026 |
+| 6 | `04AD695ABF1D90` | 1.350 sats | 04.07.2026 |
+| 7 | `04BC695ABF1D90` | 1.400 sats | 04.07.2026 |
+| 8 | `0493695ABF1D90` | 1.500 sats | 04.07.2026 |
+| 9 | `0492695ABF1D90` | 1.100 sats | 05.07.2026 |
+| 10 | `04A4695ABF1D90` | 2.100 sats | 05.07.2026 |
+| 11 | `0495695ABF1D90` | 3.100 sats | 05.07.2026 |
 
 ---
 
 ### `scripts/generate-registry.cjs` ← Build-Zeit-Generator
 Liest `chips.json` → schreibt `src/lib/chipRegistry.ts` **komplett neu**.
 
-Achtung: Das generierte Interface enthält ein `status`-Feld, das die App aber **nicht verwendet**.
-Die App liest Status immer direkt vom Chip (via `scan.chipStatus`), nicht aus der Registry.
+Achtung: Das generierte Interface enthaelt ein `status`-Feld (ChipStatus), das die App fuer den Entwert-Flow verwendet.
 
 ---
 
 ### `src/lib/chipRegistry.ts` ← AUTO-GENERIERT
-**Nicht manuell bearbeiten.** Wird bei jedem Build durch `generate-registry.cjs` überschrieben. Änderungen in `chips.json` vornehmen.
+**Nicht manuell bearbeiten.** Wird bei jedem Build durch `generate-registry.cjs` ueberschrieben. Aenderungen in `chips.json` vornehmen.
 
 Exportiert:
-- `ChipEntry` Interface (ohne `status` Feld — App braucht das nicht)
-- `CHIP_REGISTRY` Array
+- `ChipStatus` Type: `'valid' | 'invalid' | 'entwertenbeantragt'`
+- `ChipEntry` Interface (mit `status: ChipStatus`)
+- `CHIP_REGISTRY` Array (11 Chips)
 - `normalizeUID(uid)` — entfernt Doppelpunkte/Spaces/Bindestriche, uppercase
 - `lookupChip(uid)` — sucht case-insensitiv in Registry
 - `KIND_VERIFY_LOG = 6129`
@@ -49,167 +89,39 @@ Exportiert:
 ---
 
 ### `src/lib/ntag424.ts` ← Capacitor-Bridge
-JavaScript-Seite der NFC-Brücke:
+JavaScript-Seite der NFC-Bruecke:
 
 ```typescript
-isNativeAvailable(): boolean          // prüft ob Capacitor native läuft
-startNativeScan(onResult, onError)    // registriert tagRead-Listener, startet Plugin
-stopNativeScan()                      // entfernt Listener, stoppt Plugin
-writeChipStatus(uid, status, keys)    // schreibt Status auf Chip (File 02)
-readChipStatus(uid, keys)             // liest Status zurück vom Chip (Verifikation)
+isNativeAvailable(): boolean
+startNativeScan(onResult, onError)
+stopNativeScan()
+writeChipStatus(uid, status, keys)
+readChipStatus(uid, keys)
 ```
 
 Events vom Java-Plugin `tagRead`:
 ```typescript
-{
-  uid:        string  // Chip-UID (hex, uppercase, keine Doppelpunkte)
-  chipStatus: string  // Status aus File 02: "valid" / "invalid" / "entwertenbeantragt"
-  chipSats:   number  // Sats aus File 03 (4-byte big-endian int, 0 wenn nicht geschrieben)
-  debug:      string  // APDU Dump Log — alle Befehle + Antworten
-}
+{ uid: string, chipStatus: string, chipSats: number, debug: string }
 ```
-
-**WICHTIG:** `chipStatus` und `chipSats` kommen direkt vom Chip, nicht aus lokaler DB.
-Der Plugin-Name ist `"Ntag424"` — muss exakt so registriert sein in `MainActivity.java`.
 
 ---
 
 ### `src/components/NFCScanner.tsx` ← Haupt-UI
-Enthält alle NFC-bezogenen Komponenten in einer Datei.
 
-**State-Flow:**
-```
-idle → scanning → [Chip wird rangehalten]
-               ↓
-         ScanResult { uid, chipStatus, chipSats, debug }
-               ↓
-         ResultCard (zeigt status + sats vom Chip)
-               ↓
-         Aktionen:
-         - Online verifizieren (Kind 6129)
-         - Aufladen anfordern (Kind 3491) → InvoicePanel
-         - Entwerten (nur wenn chipStatus === 'valid') → EntwertFlow
-```
-
-**Website-URL** (hardcoded in NFCScanner.tsx):
-```typescript
-const WEBSITE_BASE = 'https://backuphip.shakespeare.wtf';
-function chipWebsiteUrl(uid: string) {
-  return `${WEBSITE_BASE}?chip=${uid}`;  // öffnet NUR diesen Chip
-}
-```
-
-**Entwerten-Flow (5 Schritte):**
-1. `confirm` — Bestätigung durch User
-2. `writing` — Chip ranhalten, `writeChipStatus(uid, 'invalid', DEFAULT_KEYS)` ausführen
+**Entwerten-Flow (7 Schritte):**
+1. `confirm` — Bestaetigung durch User
+2. `writing` — Chip ranhalten, `writeChipStatus(uid, 'invalid', DEFAULT_KEYS)` ausfuehren
 3. `tap_verify` — Chip nochmal ranhalten
-4. `verifying` — `readChipStatus()` prüft ob Status jetzt "invalid" ist
-5. `invoice_input` — User gibt BOLT11 (lnbc...) oder Lightning-Adresse (user@domain) ein
-   - BOLT11: Betrag wird decoded und muss = chipSats sein
-   - Lightning-Adresse: wird akzeptiert, Betrag-Check entfällt (Website prüft)
+4. `verifying` — `readChipStatus()` prueft ob Status jetzt "invalid" ist
+5. `invoice_input` — User gibt BOLT11 (lnbc...) oder Lightning-Adresse ein
 6. `sending` — Kind 3492 mit `{ uid, label, sats, invoice, chipStatus: "invalid" }` an Nostr
-7. `waiting_payment` — Website empfängt Kind 3492, zahlt aus, sendet Kind 3493
-
-**APDU Dump Log:**
-- Wird nach jedem Scan in `scan.debug` gespeichert
-- Anzeigbar via `DumpLog`-Komponente (Eye/EyeOff Toggle)
-- Enthält alle `SelectApp`, `ReadFile02`, `ReadFile03`, `WriteFile02` APDUs mit CMD + RSP
+7. `waiting_payment` — Website empfaengt Kind 3492, zahlt aus, sendet Kind 3493
 
 ---
 
 ### `src/hooks/usePublishAnonymous.ts` ← Nostr ohne Login
-Verwendet `nostr-tools` `finalizeEvent()` mit einem eingebetteten 32-Byte App-Key.
-
-```typescript
-const APP_SECRET_KEY = new Uint8Array([
-  0x7a, 0x3f, 0x12, 0xc8, 0x4e, 0x91, 0xb5, 0x6d,
-  0x2a, 0x80, 0xf4, 0x37, 0xcc, 0x59, 0x1e, 0x8b,
-  0x6f, 0x25, 0xd7, 0x43, 0xa1, 0x9c, 0x70, 0xe6,
-  0x58, 0x14, 0xb3, 0x2f, 0x91, 0x6a, 0x47, 0xd2,
-]);
-```
-
-Publiziert auf 3 Relays via WebSocket parallel. Erfolgreich wenn ≥1 Relay mit `OK` antwortet.
-
-**NICHT** `useNostrPublish` verwenden — der wirft „User is not logged in".
-
----
-
-### `.github/workflows/build-apk.yml` ← APK-Build
-Der gesamte Java-Code (MainActivity + Ntag424Plugin) wird **inline in den Workflow geschrieben** via `cat > file << 'JAVA' ... JAVA`. Das ist gewollt, weil Capacitor das Android-Verzeichnis erst zur Build-Zeit erzeugt.
-
-**Java-Plugin `Ntag424Plugin.java` — Was es beim Scan macht:**
-1. `SELECT APP` — selektiert die NTAG 424-Applikation via DF_NAME
-2. `ReadFile02` — liest 32 Bytes (Status-String: "valid"/"invalid"/"entwertenbeantragt")
-3. `ReadFile03` — liest 4 Bytes (Sats als big-endian int)
-4. Sendet `tagRead`-Event: `{ uid, chipStatus, chipSats, debug }`
-
-**Kritische Build-Anforderungen:**
-- **Java 21** (nicht 17 — Capacitor-Android benötigt 21)
-- **Android SDK 34**
-- `@capacitor/android`, `@capacitor/core`, `@capacitor/cli` alle in `package.json`
-- `capacitor.config.ts`: `appId: 'com.ntag424scanner.app'`, `webDir: 'dist'`
-
----
-
-## Häufige Aufgaben
-
-### Chip hinzufügen
-```json
-// chips.json — neuen Eintrag anhängen:
-{ "uid": "NEUE_UID", "label": "20.000 sats", "info": "", "issuedAt": "TT.MM.JJJJ" }
-```
-Pushen → GitHub Actions baut neue APK.
-
-**Gleichzeitig** Website-Repo (`Backup-424-chip-website`) updaten:
-```typescript
-// src/lib/chipRegistry.ts:
-{ uid: 'NEUE_UID', label: '20.000 sats', sats: 20000, status: 'valid', issuedAt: 'TT.MM.JJJJ' },
-```
-
-### Website-URL ändern
-In `src/components/NFCScanner.tsx`:
-```typescript
-const WEBSITE_BASE = 'https://NEUE-URL.example.com';
-```
-
-### Java-Plugin-Code ändern
-In `.github/workflows/build-apk.yml` den Inline-Java-Block suchen (nach `Write Ntag424Plugin.java`). Änderungen dort vornehmen. **Die Referenz-Implementierung liegt AUCH in `android-src/Ntag424Plugin.java`** — beide synchron halten.
-
-### APK in Website ersetzen
-Nach erfolgreichem Build:
-1. APK aus Actions herunterladen (Artifacts → `ntag424-scanner-debug`)
-2. In Shakespeare-Projekt hochladen als `/tmp/app-debug.apk`
-3. Im Website-Repo: `cp /tmp/app-debug.apk public/app-debug.apk`
-4. Build + Commit + Push
-
----
-
-## Build-Fehler und Lösungen
-
-| Fehler | Ursache | Lösung |
-|--------|---------|--------|
-| `"KIND_VERIFY_LOG" is not exported` | `generate-registry.cjs` schreibt Konstanten nicht | Script updaten |
-| `Build failed with exit code 1` (Gradle) | Java-Version falsch | `java-version: '21'` im Workflow prüfen |
-| `Cannot find module '@/lib/chipRegistry'` | chipRegistry.ts nicht generiert | `node scripts/generate-registry.cjs` laufen lassen |
-| `User is not logged in` (Toast) | `useNostrPublish` statt `usePublishAnonymous` | Hook ersetzen |
-| APK installiert nicht | Debug-Signatur | „Unbekannte Quellen" in Android aktivieren |
-
----
-
-## Was NICHT verändert werden sollte (ohne triftigen Grund)
-
-| Datei | Warum |
-|---|---|
-| `src/lib/chipRegistry.ts` | Wird durch Build überschrieben — Änderungen in `chips.json` |
-| `capacitor.config.ts` | App-ID und webDir sind kritisch für den Build |
-| `src/App.tsx` | Provider-Stack — nie ohne Lesen anfassen |
-| `APP_SECRET_KEY` in `usePublishAnonymous.ts` | Würde alle alten Events einem anderen Pubkey zuordnen |
-| `APP_TAG = 'bitcoin-note-verifier'` | Website filtert danach — muss synchron bleiben |
-| `KIND_VERIFY_LOG = 6129` | Website filtert danach — muss synchron bleiben |
-| `KIND_RELOAD_REQUEST = 3491` | Website filtert danach — muss synchron bleiben |
-| `KIND_INVALIDATE_REQUEST = 3492` | Website filtert danach — muss synchron bleiben |
-| `KIND_PAYMENT_CONFIRMED = 3493` | App hört darauf — muss synchron bleiben |
+Verwendet `nostr-tools` `finalizeEvent()` mit eingebettetem 32-Byte App-Key.
+Publiziert auf 3 Relays via WebSocket. **NICHT** `useNostrPublish` verwenden.
 
 ---
 
@@ -217,84 +129,66 @@ Nach erfolgreichem Build:
 
 ### Scan → Online verifizieren
 ```
-App scannt Chip → liest chipStatus+chipSats → User drückt "Online verifizieren"
-→ Kind 6129, content: { uid, label, sats, chipStatus, result }, t: bitcoin-note-verifier
+App scannt Chip → Kind 6129: { uid, label, sats, chipStatus, result }
+Tag: ['t', 'bitcoin-note-verifier']
 ```
 
-### Aufladen
+### Aufladen anfordern
 ```
-App → User drückt "Aufladen anfordern"
-→ Kind 3491, content: { uid, label, sats }, t: bitcoin-note-verifier
-Website empfängt 3491 → zeigt Invoice-Button
-User zahlt Invoice → Website erkennt Zahlung
-→ Kind 3493, content: { uid, paymentHash }, t: bitcoin-note-verifier
-App hört auf 3493 (usePaymentConfirmed) → WriteValidFlow öffnet sich
-App schreibt "valid" auf Chip → verifiziert
+App → Kind 3491: { uid, label, sats }
+Tag: ['t', 'bitcoin-note-verifier']
+Website empfaengt → zeigt Invoice → User zahlt → Website sendet Kind 3493
 ```
 
 ### Entwerten
 ```
-App → Chip wird auf "invalid" gesetzt (writeChipStatus)
-→ readChipStatus() bestätigt "invalid"
-→ User gibt Lightning-Invoice ein
-→ Kind 3492, content: { uid, label, sats, invoice, chipStatus: "invalid" }, t: bitcoin-note-verifier
-Website empfängt 3492 → EntwertPanel zeigt Auszahlen-Button
-Website prüft: BOLT11-Betrag == chip.sats
-→ POST LNbits /api/v1/payments out:true bolt11: <invoice> (Admin-Key)
-→ Kind 3493, content: { uid, paymentHash, sats, paidAt }
-Website speichert uid in localStorage PAYOUT_DONE_KEY (dauerhaft invalid)
-Erst nach erneutem Aufladen (Kind 3491 + bezahlt) darf Chip wieder valid werden
+App schreibt "invalid" auf Chip → verifiziert
+→ Kind 3492: { uid, label, sats, invoice, chipStatus: "invalid" }
+Tag: ['t', 'bitcoin-note-verifier']
+Website empfaengt → EntwertPanel → prueft chipStatus + Betrag
+→ POST LNbits Admin-Key /api/v1/payments out:true bolt11:<invoice>
+→ Kind 3493: { uid, paymentHash, sats, paidAt }
+→ Chip dauerhaft als "invalid" gespeichert
 ```
 
 ---
 
-## Systemkontext
+## Build-Prozess (GitHub Actions)
 
-```
-┌─────────────────────────┐
-│   Physischer            │
-│   Bitcoin-Schein        │
-│   NTAG 424 TT NFC-Chip  │
-│   File 02: Status       │
-│   File 03: Sats         │
-└──────────┬──────────────┘
-           │ ISO-DEP APDU (IsoDep)
-           │ SELECT APP + ReadFile02 + ReadFile03
-           ▼
-┌─────────────────────────┐
-│   Ntag424Plugin.java    │
-│   tagRead event:        │
-│   { uid, chipStatus,    │
-│     chipSats, debug }   │
-└──────────┬──────────────┘
-           │ Capacitor Bridge
-           ▼
-┌─────────────────────────┐
-│   NFCScanner.tsx        │
-│   - ResultCard          │
-│   - EntwertFlow         │
-│   - InvoicePanel        │
-│   - DumpLog             │
-└──────────┬──────────────┘
-           │ Nostr WSS
-           │ Kind 6129/3491/3492
-           ▼
-┌─────────────────────────┐
-│  relay.ditto.pub        │
-│  relay.primal.net       │
-│  relay.damus.io         │
-└──────────┬──────────────┘
-           │
-           ▼
-┌─────────────────────────┐
-│  Website                │
-│  backuphip.             │
-│  shakespeare.wtf        │
-│  - EntwertPanel         │
-│  - LNbits Admin Payout  │
-│  - Kind 3493 confirm    │
-└─────────────────────────┘
-```
+`.github/workflows/build-apk.yml` — automatisch bei jedem Push auf `main`:
+1. `node scripts/generate-registry.cjs` → chipRegistry.ts aus chips.json
+2. `npx vite build` → `dist/`
+3. `cap add android` + `cap sync android`
+4. Java-Plugin-Code (MainActivity + Ntag424Plugin) inline geschrieben
+5. JDK 21 + Android SDK 34
+6. `./gradlew assembleDebug`
+7. APK als Artifact hochgeladen
+
+**Kritisch:** Java 21, nicht 17.
+
+---
+
+## Was NICHT veraendert werden sollte
+
+| Datei | Warum |
+|---|---|
+| `APP_SECRET_KEY` in usePublishAnonymous.ts | Aendert den Pubkey aller Events |
+| `APP_TAG = 'bitcoin-note-verifier'` | Website filtert danach |
+| Kind-Nummern (6129, 3491, 3492, 3493) | Website + App muessen synchron sein |
+| `capacitor.config.ts` | App-ID und webDir kritisch fuer Build |
+| `src/App.tsx` | Provider-Stack — nie ohne Lesen anfassen |
+
+---
+
+## Zugehoerige Repositories
+
+| Repository | Inhalt | URL |
+|---|---|---|
+| `Backup-424-chip-App` | App (dieses Repo) | `github.com/TUitio123/Backup-424-chip-App` |
+| `Backup-424-chip-website` | Website | `github.com/TUitio123/Backup-424-chip-website` |
+| `ntag424-tt-scanner-v2` | App (Primaer) | `github.com/TUitio123/ntag424-tt-scanner-v2` (privat) |
+| `bitcoin-note-verifier` | Website (Primaer) | `github.com/TUitio123/bitcoin-note-verifier` (privat) |
+| `backup-424-sync` | Shakespeare Sync-Projekt | (lokal in Shakespeare) |
 
 ---
 
@@ -305,6 +199,5 @@ feat: neues Feature
 fix: Bugfix
 chore: Wartung (Deps, Config, Chips)
 docs: nur Dokumentation
+sync: Repository-Synchronisation
 ```
-
-Nach Änderungen: Push → Actions abwarten → APK herunterladen → in Website-Repo ersetzen.
