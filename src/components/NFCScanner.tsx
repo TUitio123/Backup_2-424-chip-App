@@ -190,19 +190,19 @@ function ResultCard({ scan, chip }: { scan: ScanResult; chip: ChipEntry | null }
         </div>
       )}
 
-      {/* Website link */}
+      {/* Website link — zeigt die volle URL mit Chip-ID */}
       {chip && (
         <a
           href={chipWebsiteUrl(chip.uid)}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center justify-between w-full px-3 py-2 rounded-xl text-xs font-bold transition-all hover:opacity-80"
-          style={{ background: 'rgba(247,147,26,0.06)', border: '1px solid rgba(247,147,26,0.15)', color: 'rgba(247,147,26,0.7)' }}>
-          <span className="flex items-center gap-1.5">
-            <Globe className="w-3.5 h-3.5" />
-            backuphip.shakespeare.wtf
+          className="flex items-center justify-between w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all hover:scale-[1.01] active:scale-[0.99]"
+          style={{ background: 'rgba(247,147,26,0.1)', border: '1px solid rgba(247,147,26,0.25)', color: '#f7931a' }}>
+          <span className="flex items-center gap-2 min-w-0">
+            <Globe className="w-4 h-4 flex-shrink-0" />
+            <span className="truncate">backuphip.shakespeare.wtf/{chip.uid}</span>
           </span>
-          <ExternalLink className="w-3 h-3" />
+          <ExternalLink className="w-3.5 h-3.5 flex-shrink-0 ml-2" />
         </a>
       )}
     </div>
@@ -1037,6 +1037,24 @@ function OnlineActions({ scan, chip, onStartInvoice, showingInvoice }: {
            <Upload className="w-3.5 h-3.5" />}
           {reloadState === 'done' ? 'Angefordert!' : reloadState === 'error' ? 'Retry' : 'Aufladen anfordern'}
         </button>
+      )}
+
+      {/* Website-Link — immer sichtbar nach Aktionen */}
+      {chip && (verifyState === 'done' || reloadState === 'done') && (
+        <a
+          href={chipWebsiteUrl(chip.uid)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-between w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all hover:scale-[1.01] active:scale-[0.99]"
+          style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', color: '#34d399' }}>
+          <span className="flex items-center gap-2 min-w-0">
+            <ExternalLink className="w-4 h-4 flex-shrink-0" />
+            <span className="truncate">Auf Website anschauen</span>
+          </span>
+          <span className="text-[9px] font-mono flex-shrink-0 ml-2" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            /{chip.uid.slice(0, 6)}…
+          </span>
+        </a>
       )}
     </div>
   );
