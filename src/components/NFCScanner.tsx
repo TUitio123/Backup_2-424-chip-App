@@ -39,14 +39,14 @@ import {
 import { useToast } from '@/hooks/useToast';
 import { usePaymentConfirmed } from '@/hooks/usePaymentConfirmed';
 import { usePublishAnonymous } from '@/hooks/usePublishAnonymous';
-import { LNBITS_CONFIG } from '@/lib/lnbitsConfig';
+import { LNBITS_CONFIG, calcReloadFee } from '@/lib/lnbitsConfig';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const WEBSITE_BASE = 'https://backuphip.shakespeare.wtf';
 
 function chipWebsiteUrl(uid: string) {
-  return `${WEBSITE_BASE}?chip=${uid}`;
+  return `${WEBSITE_BASE}/${uid}`;
 }
 
 const DEFAULT_KEYS = {
@@ -675,7 +675,8 @@ function InvoicePanel({ chip, chipSats, onPaid }: InvoicePanelProps) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { toast } = useToast();
   const sats = chipSats > 0 ? chipSats : chip.sats;
-  const amount = sats + LNBITS_CONFIG.reloadFee;
+  const fee = calcReloadFee(sats);
+  const amount = sats + fee;
 
   useEffect(() => () => {
     if (pollRef.current)  clearInterval(pollRef.current);
@@ -787,7 +788,7 @@ function InvoicePanel({ chip, chipSats, onPaid }: InvoicePanelProps) {
             {amount.toLocaleString('de-DE')} <span className="text-sm font-bold">sats</span>
           </div>
           <div className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.25)' }}>
-            {sats.toLocaleString('de-DE')} + {LNBITS_CONFIG.reloadFee} Gebühr
+            {sats.toLocaleString('de-DE')} + {fee} Gebühr (1%)
           </div>
         </div>
         <div className={cn('text-right text-xs font-mono font-bold',

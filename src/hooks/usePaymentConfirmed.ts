@@ -1,11 +1,12 @@
 /**
  * usePaymentConfirmed
  *
- * Hört auf Nostr Kind-3493-Events ("Zahlung bestätigt", gesendet von der Website
+ * Hoert auf Nostr Kind-3493-Events ("Zahlung bestaetigt", gesendet von der Website
  * nachdem eine LN-Invoice bezahlt wurde).
  *
- * Gibt den neuesten bestätigten Payment-Event für eine UID zurück,
- * falls er jünger als 30 Minuten ist (damit alte Events ignoriert werden).
+ * Gibt den neuesten bestaetigten Payment-Event fuer eine UID zurueck.
+ * KEIN Zeitlimit — die App gleicht IMMER mit der Website ab.
+ * Wenn ein Kind-3493 existiert, darf die App den Chip auf "valid" setzen.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -16,11 +17,10 @@ export interface PaymentConfirmedEvent {
   id: string;
   uid: string;
   paymentHash: string;
+  sats: number;
   timestamp: number;
   pubkey: string;
 }
-
-const MAX_AGE_SECONDS = 30 * 60; // 30 Minuten
 
 export function usePaymentConfirmed(uid: string | null) {
   const { nostr } = useNostr();
@@ -29,11 +29,8 @@ export function usePaymentConfirmed(uid: string | null) {
     queryKey: ['payment-confirmed', uid],
     enabled: !!uid,
     queryFn: async (c) => {
-      const now = Math.floor(Date.now() / 1000);
-      const since = now - MAX_AGE_SECONDS;
-
       const events = await nostr.query(
-        [{ kinds: [KIND_PAYMENT_CONFIRMED], '#t': [APP_TAG], since, limit: 20 }],
+        [{ kinds: [KIND_PAYMENT_CONFIRMED], '#t': [APP_TAG], limit: 50 }],
         { signal: c.signal },
       );
 
@@ -49,6 +46,7 @@ export function usePaymentConfirmed(uid: string | null) {
               id: e.id,
               uid: String(data.uid ?? ''),
               paymentHash: String(data.paymentHash ?? ''),
+              sats: Number(data.sats ?? 0),
               timestamp: e.created_at,
               pubkey: e.pubkey,
             };
@@ -59,6 +57,6 @@ export function usePaymentConfirmed(uid: string | null) {
 
       return match;
     },
-    refetchInterval: 5_000, // alle 5 Sekunden prüfen
+    refetchInterval: 5_000,
   });
 }

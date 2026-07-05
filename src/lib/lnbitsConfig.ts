@@ -31,8 +31,13 @@ export const LNBITS_CONFIG = {
   invoiceExpiry: 3600,
 
   /**
-   * Aufpreis in Sats der IMMER auf den Chip-Betrag draufgerechnet wird.
-   * Chip hat 11.000 sats → Invoice = 11.500 sats
+   * Aufpreis-Prozentsatz beim Aufladen (1% des Chip-Guthabens, mind. 1 sat).
+   * z.B. 2.100 sats → Gebühr = 21 sats → Invoice = 2.121 sats
    */
-  reloadFee: 500,
+  reloadFeePercent: 0.01,
 } as const;
+
+/** Berechnet die Gebühr: 1% des Chip-Betrags, mind. 1 sat */
+export function calcReloadFee(sats: number): number {
+  return Math.max(1, Math.round(sats * LNBITS_CONFIG.reloadFeePercent));
+}
