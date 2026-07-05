@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Wifi, WifiOff, CheckCircle, XCircle, AlertTriangle,
+  Wifi, WifiOff, CheckCircle, XCircle,
   RefreshCw, Copy, ChevronDown, ChevronUp, Zap,
   ShieldAlert, HelpCircle, Globe, Upload, Loader2, Trash2,
-  Check, ShieldCheck, ShieldX, Clock,
+  Check, ShieldCheck, ShieldX, AlertTriangle, ExternalLink,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
-  ScanResult, ScanStatus, TamperStatus,
+  ScanResult, ScanStatus,
   isNativeAvailable, startNativeScan, stopNativeScan,
   writeChipStatus, readChipStatus, ChipStatus,
 } from '@/lib/ntag424';
@@ -17,40 +17,99 @@ import {
 } from '@/lib/chipRegistry';
 import { useToast } from '@/hooks/useToast';
 import { usePaymentConfirmed } from '@/hooks/usePaymentConfirmed';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { usePublishAnonymous } from '@/hooks/usePublishAnonymous';
+import { LNBITS_CONFIG } from '@/lib/lnbitsConfig';
+
+// ─── QR Code (canvas) ─────────────────────────────────────────────────────────
+import { QRCodeCanvas } from '@/components/ui/qrcode';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const WEBSITE_BASE = 'https://Testtest123.shakespeare.wtf';
+
+function chipWebsiteUrl(uid: string) {
+  // Opens website directly on the detail page for this chip
+  return `${WEBSITE_BASE}?chip=${uid}`;
+}
+
+function formatTimeLeft(seconds: number): string {
+  if (seconds <= 0) return 'Abgelaufen';
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
 
 // ─── Chip-Status Badge ────────────────────────────────────────────────────────
 
 function ChipStatusBadge({ status }: { status: ChipStatus }) {
   if (status === 'valid')
     return (
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border"
+      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
         style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#34d399' }}>
         <ShieldCheck className="w-4 h-4" />
-        <span className="font-bold text-sm">VALID — Schein aufgeladen</span>
+        <span className="font-bold text-sm">VALID — aufgeladen</span>
       </div>
     );
   if (status === 'entwertenbeantragt')
     return (
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border"
+      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
         style={{ background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.3)', color: '#fb923c' }}>
         <AlertTriangle className="w-4 h-4" />
         <span className="font-bold text-sm">Entwertung beantragt</span>
       </div>
     );
   return (
-    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border"
+    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
       style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171' }}>
       <ShieldX className="w-4 h-4" />
-      <span className="font-bold text-sm">INVALID — Schein entwertet</span>
+      <span className="font-bold text-sm">INVALID — entwertet</span>
     </div>
   );
 }
 
-// ─── Verification result ──────────────────────────────────────────────────────
+// ─── Result card ──────────────────────────────────────────────────────────────
+
+function ResultCard({ verify, scan }: { verify: VerifyResult; scan: ScanResult }) {
+  const chip       = verify.kind !== 'unknown' ? verify.chip : null;
+  const chipStatus = chip?.status ?? null;
+  const isKnown    = verify.kind !== 'unknown';
+
+  const borderColor = isKnown ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.25)';
+  const bgColor     = isKnown ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)';
+  const Icon        = isKnown ? (chipStatus === 'invalid' ? ShieldX : ShieldCheck) : HelpCircle;
+  const iconColor   = isKnown ? (chipStatus === 'invalid' ? '#f87171' : '#34d399') : '#f87171';
+
+  return (
+    <div className="rounded-2xl p-5 space-y-3" style={{ background: bgColor, border: `1px solid ${borderColor}` }}>
+      <div className="flex items-center gap-4">
+        {/* Icon */}
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0"
+          style={{ background: isKnown ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${borderColor}` }}>
+          <Icon className="w-8 h-8" style={{ color: iconColor }} />
+        </div>
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          {chip ? (
+            <>
+              <div className="text-2xl font-black" style={{ color: '#f7931a' }}>{chip.label}</div>
+              {chip.issuedAt && <div className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>Ausgegeben: {chip.issuedAt}</div>}
+            </>
+          ) : (
+            <div className="text-lg font-bold text-red-300">Chip nicht registriert</div>
+          )}
+          <div className="font-mono text-[11px] mt-1 break-all" style={{ color: 'rgba(255,255,255,0.4)' }}>{scan.uid}</div>
+        </div>
+      </div>
+      {/* DB Status */}
+      {chipStatus && <div className="flex justify-start"><ChipStatusBadge status={chipStatus} /></div>}
+    </div>
+  );
+}
+
+// ─── Verification result type ─────────────────────────────────────────────────
 
 type VerifyResult =
   | { kind: 'verified'; chip: ChipEntry }
@@ -60,117 +119,25 @@ type VerifyResult =
 function classify(scan: ScanResult): VerifyResult {
   const chip = lookupChip(scan.uid);
   if (!chip) return { kind: 'unknown' };
-  return scan.tamperStatus === 'CC' ? { kind: 'verified', chip } : { kind: 'warn', chip };
+  // Status aus DB ist primary; tamper nur noch als debug-info
+  return chip.status === 'valid'
+    ? { kind: 'verified', chip }
+    : { kind: 'warn', chip };
 }
 
-// ─── Tamper pill ──────────────────────────────────────────────────────────────
-
-function TamperPill({ tamperStatus, verifyKind }: { tamperStatus: TamperStatus; verifyKind: VerifyResult['kind'] }) {
-  const isGreen = tamperStatus === 'CC';
-  const color =
-    verifyKind === 'verified' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25' :
-    verifyKind === 'warn'     ? 'bg-orange-500/15 text-orange-300 border-orange-500/25'    :
-                                'bg-slate-700/60 text-slate-400 border-slate-600';
-  return (
-    <div className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-mono', color)}>
-      <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', isGreen ? 'bg-emerald-400' : 'bg-orange-400')} />
-      <span>Tamper: <span className="font-bold">{tamperStatus}</span></span>
-      {!isGreen && <AlertTriangle className="w-3 h-3 opacity-80" />}
-    </div>
-  );
-}
-
-// ─── Verify badge ─────────────────────────────────────────────────────────────
-
-function VerifyBadge({ verify, scan }: { verify: VerifyResult; scan: ScanResult }) {
-  const chip = verify.kind !== 'unknown' ? verify.chip : null;
-  const chipStatus = chip?.status ?? null;
-
-  const borderColor =
-    verify.kind === 'verified' ? 'border-emerald-500/50' :
-    verify.kind === 'warn'     ? 'border-orange-500/50'  : 'border-red-500/40';
-  const bgColor =
-    verify.kind === 'verified' ? 'bg-emerald-500/15' :
-    verify.kind === 'warn'     ? 'bg-orange-500/15'  : 'bg-red-500/15';
-  const Icon =
-    verify.kind === 'verified' ? CheckCircle :
-    verify.kind === 'warn'     ? AlertTriangle : HelpCircle;
-  const iconColor =
-    verify.kind === 'verified' ? 'text-emerald-400' :
-    verify.kind === 'warn'     ? 'text-orange-400'  : 'text-red-400';
-  const label =
-    verify.kind === 'verified' ? 'Verified' :
-    verify.kind === 'warn'     ? 'Achtung'  : 'Unbekannt';
-  const labelColor =
-    verify.kind === 'verified' ? 'text-emerald-400' :
-    verify.kind === 'warn'     ? 'text-orange-400'  : 'text-red-400';
-
-  return (
-    <div className="flex flex-col items-center gap-3 py-6">
-      <div className={cn('w-28 h-28 rounded-full border-4 flex items-center justify-center', bgColor, borderColor)}
-        style={{ boxShadow: verify.kind === 'verified' ? '0 0 40px rgba(16,185,129,0.25)' : undefined }}>
-        <Icon className={cn('w-16 h-16', iconColor)} />
-      </div>
-      <div className="text-center space-y-1">
-        <div className={cn('font-bold text-sm uppercase tracking-widest', labelColor)}>{label}</div>
-        {chip && <div className="text-white font-extrabold text-4xl tracking-tight">{chip.label}</div>}
-        {chip?.info && <div className="text-slate-400 text-sm">{chip.info}</div>}
-        {chip?.issuedAt && <div className="text-slate-600 text-xs">Ausgegeben: {chip.issuedAt}</div>}
-      </div>
-      <TamperPill tamperStatus={scan.tamperStatus} verifyKind={verify.kind} />
-      {/* DB-Status des Chips */}
-      {chipStatus && (
-        <ChipStatusBadge status={chipStatus} />
-      )}
-    </div>
-  );
-}
-
-// ─── Raw data panel ───────────────────────────────────────────────────────────
-
-function RawDataPanel({ scan, verify }: { scan: ScanResult; verify: VerifyResult }) {
-  const [open, setOpen] = useState(false);
-  const payload = JSON.stringify({
-    uid: scan.uid,
-    tamperStatus: scan.tamperStatus,
-    verifyResult: verify.kind,
-    chipStatus: verify.kind !== 'unknown' ? verify.chip.status : null,
-    label: verify.kind !== 'unknown' ? verify.chip.label : null,
-    timestamp: new Date(scan.timestamp).toISOString(),
-    debug: scan.debug ?? null,
-  }, null, 2);
-  return (
-    <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
-      <button onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors">
-        <span className="text-slate-400 text-xs font-medium uppercase tracking-wider">Rohdaten</span>
-        {open ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-      </button>
-      {open && (
-        <div className="border-t border-white/10 p-3">
-          <pre className="text-xs text-slate-300 font-mono bg-black/30 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
-            {payload}
-          </pre>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── UID row ──────────────────────────────────────────────────────────────────
+// ─── UID copy row ─────────────────────────────────────────────────────────────
 
 function UIDRow({ uid }: { uid: string }) {
   const { toast } = useToast();
   return (
-    <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-      <div>
-        <div className="text-slate-500 text-xs mb-0.5 uppercase tracking-wider">Chip UID</div>
-        <div className="font-mono text-white text-sm tracking-widest">{uid}</div>
+    <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-0.5">Chip UID</div>
+        <div className="font-mono text-white text-xs tracking-widest truncate">{uid}</div>
       </div>
-      <button
-        onClick={() => navigator.clipboard.writeText(uid).then(() => toast({ title: 'UID kopiert' })).catch(() => {})}
-        className="text-slate-500 hover:text-slate-300 transition-colors p-2">
-        <Copy className="w-4 h-4" />
+      <button onClick={() => navigator.clipboard.writeText(uid).then(() => toast({ title: 'UID kopiert' })).catch(() => {})}
+        className="text-slate-500 hover:text-slate-300 transition-colors p-2 flex-shrink-0">
+        <Copy className="w-3.5 h-3.5" />
       </button>
     </div>
   );
@@ -185,7 +152,7 @@ function ScanButton({ status, hasResult, onScan, onStop }: {
   return (
     <button onClick={scanning ? onStop : onScan} disabled={status === 'unsupported'}
       className={cn(
-        'relative w-44 h-44 rounded-full flex flex-col items-center justify-center gap-3 border-4 transition-all duration-300 select-none',
+        'relative w-40 h-40 rounded-full flex flex-col items-center justify-center gap-2 border-4 transition-all duration-300 select-none',
         'focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-500',
         status === 'idle'        && 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/30 hover:border-blue-400 active:scale-95 cursor-pointer',
         scanning                 && 'bg-blue-600/30 border-blue-400 animate-pulse cursor-pointer',
@@ -194,14 +161,14 @@ function ScanButton({ status, hasResult, onScan, onStop }: {
       )}>
       {scanning && (
         <>
-          <span className="absolute inset-0 rounded-full border-4 border-blue-400 animate-ping opacity-25" />
-          <span className="absolute -inset-3 rounded-full border-2 border-blue-400/20 animate-ping opacity-15" style={{ animationDelay: '0.4s' }} />
+          <span className="absolute inset-0 rounded-full border-4 border-blue-400 animate-ping opacity-20" />
+          <span className="absolute -inset-3 rounded-full border-2 border-blue-400/15 animate-ping" style={{ animationDelay: '0.4s' }} />
         </>
       )}
       <div className="relative z-10">
-        {status === 'error'       && <XCircle className="w-12 h-12 text-red-400" />}
-        {status === 'unsupported' && <WifiOff className="w-12 h-12 text-slate-500" />}
-        {(status === 'idle' || scanning) && <Wifi className={cn('w-12 h-12', scanning ? 'text-blue-300' : 'text-blue-400')} />}
+        {status === 'error'       && <XCircle className="w-10 h-10 text-red-400" />}
+        {status === 'unsupported' && <WifiOff className="w-10 h-10 text-slate-500" />}
+        {(status === 'idle' || scanning) && <Wifi className={cn('w-10 h-10', scanning ? 'text-blue-300' : 'text-blue-400')} />}
       </div>
       <span className={cn('relative z-10 text-xs font-bold tracking-widest uppercase',
         status === 'idle' && 'text-blue-300', scanning && 'text-blue-200',
@@ -210,72 +177,217 @@ function ScanButton({ status, hasResult, onScan, onStop }: {
         {status === 'idle' && 'Scannen'}
         {scanning && !hasResult && 'Warte…'}
         {scanning && hasResult  && 'Scannt…'}
-        {status === 'error' && 'Retry'}
+        {status === 'error'     && 'Retry'}
         {status === 'unsupported' && 'N/A'}
       </span>
     </button>
   );
 }
 
-// ─── Schreib-Flow nach Zahlung ────────────────────────────────────────────────
+// ─── Invoice Panel (in-app) ───────────────────────────────────────────────────
 
-type WriteFlowStep =
-  | 'waiting_payment'   // wartet auf Kind 3493 von Website
-  | 'tap_to_write'      // Nutzer soll Chip ranhalten zum Schreiben
-  | 'holding'           // Chip rangehalten, 10s stabil halten
-  | 'writing'           // schreibt gerade
-  | 'tap_to_verify'     // Nutzer soll nochmal ranhalten zur Verifikation
-  | 'verifying'         // liest zurück
-  | 'done_ok'           // alles gut
-  | 'done_error';       // Fehler
+type InvoicePhase = 'idle' | 'loading' | 'open' | 'paid' | 'error';
 
-interface WriteFlowProps {
-  scan: ScanResult;
+interface InvoicePanelProps {
   chip: ChipEntry;
-  onClose: () => void;
+  onPaid: (paymentHash: string) => void;
 }
 
-// Keys aus chips.json / App-Bundle — für jetzt 32 Nullen
-// In Produktion: aus dem keys/<UID>.json file laden
 const DEFAULT_KEYS = {
   appMasterKey: '00000000000000000000000000000000',
   fileReadKey:  '00000000000000000000000000000000',
   fileWriteKey: '00000000000000000000000000000000',
 };
 
-function WriteFlow({ scan, chip, onClose }: WriteFlowProps) {
-  const [step, setStep] = useState<WriteFlowStep>('waiting_payment');
-  const [holdSeconds, setHoldSeconds] = useState(0);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [verifiedStatus, setVerifiedStatus] = useState<ChipStatus | null>(null);
-  const holdRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const tapListenerRef = useRef<(() => void) | null>(null);
+function InvoicePanel({ chip, onPaid }: InvoicePanelProps) {
+  const [phase,     setPhase]     = useState<InvoicePhase>('idle');
+  const [bolt11,    setBolt11]    = useState('');
+  const [hash,      setHash]      = useState('');
+  const [expiresAt, setExpiresAt] = useState(0);
+  const [remaining, setRemaining] = useState(0);
+  const [copied,    setCopied]    = useState(false);
+  const [errMsg,    setErrMsg]    = useState('');
+  const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { toast } = useToast();
 
-  // Hört auf Kind 3493 Payment-Confirmed
-  const { data: paymentEvent } = usePaymentConfirmed(scan.uid);
-
-  useEffect(() => {
-    if (paymentEvent && step === 'waiting_payment') {
-      setStep('tap_to_write');
-      toast({ title: '💰 Zahlung bestätigt!', description: 'Jetzt Chip ranhalten zum Schreiben.' });
-    }
-  }, [paymentEvent, step, toast]);
-
-  // Cleanup
   useEffect(() => () => {
-    if (holdRef.current) clearInterval(holdRef.current);
+    if (pollRef.current)  clearInterval(pollRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
   }, []);
 
-  const startHolding = useCallback(async () => {
+  const generate = async () => {
+    setPhase('loading');
+    try {
+      const amount = chip.sats + LNBITS_CONFIG.reloadFee;
+      const res = await fetch(`${LNBITS_CONFIG.nodeUrl}/api/v1/payments`, {
+        method: 'POST',
+        headers: { 'X-Api-Key': LNBITS_CONFIG.invoiceReadKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ out: false, amount, memo: `Aufladen: ${chip.uid} (${chip.label})`, expiry: LNBITS_CONFIG.invoiceExpiry, unit: 'sat' }),
+      });
+      if (!res.ok) throw new Error(`LNbits ${res.status}`);
+      const data = await res.json() as { payment_hash: string; payment_request: string };
+      setBolt11(data.payment_request);
+      setHash(data.payment_hash);
+      const exp = Math.floor(Date.now() / 1000) + LNBITS_CONFIG.invoiceExpiry;
+      setExpiresAt(exp);
+      setRemaining(LNBITS_CONFIG.invoiceExpiry);
+      setPhase('open');
+
+      // Countdown timer
+      timerRef.current = setInterval(() => {
+        setRemaining(r => Math.max(0, r - 1));
+      }, 1000);
+
+      // Payment polling
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await fetch(`${LNBITS_CONFIG.nodeUrl}/api/v1/payments/${data.payment_hash}`,
+            { headers: { 'X-Api-Key': LNBITS_CONFIG.invoiceReadKey } });
+          if (!r.ok) return;
+          const d = await r.json() as { paid: boolean };
+          if (d.paid) {
+            clearInterval(pollRef.current!);
+            clearInterval(timerRef.current!);
+            setPhase('paid');
+            toast({ title: '💰 Zahlung eingegangen!', description: 'Chip jetzt ranhalten zum Schreiben.' });
+            onPaid(data.payment_hash);
+          }
+        } catch { /* ignore */ }
+      }, 3000);
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+      setPhase('error');
+    }
+  };
+
+  const cancel = () => {
+    if (pollRef.current)  clearInterval(pollRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    setPhase('idle');
+  };
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(bolt11);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const amount = chip.sats + LNBITS_CONFIG.reloadFee;
+  const expired = remaining <= 0 && phase === 'open';
+  const urgent  = remaining > 0 && remaining < 120;
+
+  if (phase === 'idle') return (
+    <button onClick={generate}
+      className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
+      style={{ background: 'linear-gradient(135deg, rgba(247,147,26,0.2) 0%, rgba(247,147,26,0.1) 100%)', border: '1px solid rgba(247,147,26,0.4)', color: '#f7931a' }}>
+      <Zap className="w-4 h-4" />
+      Invoice erstellen — {amount.toLocaleString('de-DE')} sats
+    </button>
+  );
+
+  if (phase === 'loading') return (
+    <div className="w-full h-12 rounded-xl flex items-center justify-center gap-2"
+      style={{ background: 'rgba(247,147,26,0.08)', border: '1px solid rgba(247,147,26,0.2)' }}>
+      <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#f7931a' }} />
+      <span className="text-sm" style={{ color: 'rgba(247,147,26,0.7)' }}>Generiere Invoice…</span>
+    </div>
+  );
+
+  if (phase === 'error') return (
+    <div className="rounded-xl p-3 space-y-2" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+      <p className="text-red-300 text-xs">{errMsg}</p>
+      <button onClick={() => setPhase('idle')} className="text-xs px-3 py-1 rounded-lg"
+        style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171' }}>Nochmal</button>
+    </div>
+  );
+
+  if (phase === 'paid') return (
+    <div className="rounded-xl p-4 text-center space-y-1"
+      style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
+      <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto" />
+      <p className="text-emerald-300 font-bold">Bezahlt! Chip jetzt ranhalten.</p>
+    </div>
+  );
+
+  // open
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(247,147,26,0.25)' }}>
+      {/* Amount + Timer header */}
+      <div className="px-4 pt-4 pb-3 flex items-center justify-between"
+        style={{ background: 'rgba(247,147,26,0.06)' }}>
+        <div>
+          <div className="text-2xl font-black" style={{ color: '#f7931a' }}>
+            {amount.toLocaleString('de-DE')} <span className="text-base font-bold">sats</span>
+          </div>
+          <div className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            ({chip.sats.toLocaleString('de-DE')} + {LNBITS_CONFIG.reloadFee} Gebühr)
+          </div>
+        </div>
+        {/* Countdown */}
+        <div className={cn('text-right', expired ? 'text-red-400' : urgent ? 'text-orange-400' : 'text-slate-400')}>
+          <div className="text-xs font-mono font-bold">{expired ? 'ABGELAUFEN' : formatTimeLeft(remaining)}</div>
+          <div className="text-[10px] opacity-60">verbleibend</div>
+        </div>
+      </div>
+
+      {/* QR Code */}
+      {!expired && (
+        <div className="flex justify-center py-4 px-4" style={{ background: 'white' }}>
+          <QRCodeCanvas value={bolt11.toUpperCase()} size={200} level="M" />
+        </div>
+      )}
+      {expired && (
+        <div className="py-6 text-center">
+          <p className="text-red-300 text-sm font-semibold">Invoice abgelaufen</p>
+          <button onClick={generate} className="mt-2 text-xs px-3 py-1.5 rounded-lg"
+            style={{ background: 'rgba(247,147,26,0.12)', border: '1px solid rgba(247,147,26,0.3)', color: '#f7931a' }}>
+            Neu generieren
+          </button>
+        </div>
+      )}
+
+      {/* Actions */}
+      {!expired && (
+        <div className="px-4 pb-4 pt-3 space-y-2" style={{ background: 'rgba(0,0,0,0.15)' }}>
+          <button onClick={copy}
+            className="w-full h-10 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all"
+            style={copied
+              ? { background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.35)', color: '#34d399' }
+              : { background: 'rgba(247,147,26,0.1)',  border: '1px solid rgba(247,147,26,0.25)', color: '#f7931a' }}>
+            {copied ? <><Check className="w-4 h-4" /> Kopiert!</> : <><Copy className="w-4 h-4" /> Invoice kopieren</>}
+          </button>
+          <button onClick={cancel} className="w-full text-center text-xs py-1" style={{ color: 'rgba(255,255,255,0.2)' }}>
+            Abbrechen
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Write Flow ───────────────────────────────────────────────────────────────
+
+type WriteFlowStep = 'tap_to_write' | 'holding' | 'writing' | 'tap_to_verify' | 'verifying' | 'done_ok' | 'done_error';
+
+function WriteFlow({ scan, chip, onClose }: { scan: ScanResult; chip: ChipEntry; onClose: () => void }) {
+  const [step,            setStep]            = useState<WriteFlowStep>('tap_to_write');
+  const [holdSeconds,     setHoldSeconds]     = useState(0);
+  const [errorMsg,        setErrorMsg]        = useState('');
+  const [verifiedStatus,  setVerifiedStatus]  = useState<ChipStatus | null>(null);
+  const holdRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { toast } = useToast();
+
+  useEffect(() => () => { if (holdRef.current) clearInterval(holdRef.current); }, []);
+
+  const startHolding = useCallback(() => {
     setStep('holding');
     setHoldSeconds(0);
-    // 10 Sekunden zählen
     holdRef.current = setInterval(() => {
       setHoldSeconds(s => {
         if (s >= 9) {
           clearInterval(holdRef.current!);
-          // Schreiben starten
           setStep('writing');
           doWrite();
           return 10;
@@ -287,146 +399,82 @@ function WriteFlow({ scan, chip, onClose }: WriteFlowProps) {
 
   const doWrite = useCallback(async () => {
     const result = await writeChipStatus(scan.uid, 'valid', DEFAULT_KEYS);
-    if (!result.success) {
-      setErrorMsg(result.error ?? 'Schreiben fehlgeschlagen');
-      setStep('done_error');
-      return;
-    }
-    toast({ title: '✅ Status geschrieben', description: 'Chip nochmal ranhalten zur Verifikation.' });
+    if (!result.success) { setErrorMsg(result.error ?? 'Fehler'); setStep('done_error'); return; }
+    toast({ title: '✅ Geschrieben', description: 'Nochmal ranhalten zur Verifikation.' });
     setStep('tap_to_verify');
   }, [scan.uid, toast]);
 
   const doVerify = useCallback(async () => {
     setStep('verifying');
     const result = await readChipStatus(scan.uid, DEFAULT_KEYS);
-    if (!result.success) {
-      setErrorMsg(result.error ?? 'Lesen fehlgeschlagen');
-      setStep('done_error');
-      return;
-    }
+    if (!result.success) { setErrorMsg(result.error ?? 'Fehler'); setStep('done_error'); return; }
     setVerifiedStatus(result.status ?? null);
     setStep('done_ok');
-    if (result.status === 'valid') {
-      toast({ title: '✅ Verifikation erfolgreich', description: 'Chip zeigt: valid' });
-    } else {
-      toast({ title: '⚠️ Verifikation', description: `Chip zeigt: ${result.status}`, variant: 'destructive' });
-    }
+    toast({ title: result.status === 'valid' ? '✅ Verifiziert' : '⚠️ Achtung', description: `Chip: ${result.status}` });
   }, [scan.uid, toast]);
 
   return (
     <Card className="border-amber-500/30 bg-amber-500/5">
       <CardContent className="p-4 space-y-4">
-        {/* Header */}
         <div className="flex items-center justify-between">
-          <span className="text-amber-300 font-bold text-sm">⚡ Aufladen-Schreib-Flow</span>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xs">✕ Schließen</button>
+          <span className="text-amber-300 font-bold text-sm">⚡ Schreib-Flow</span>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xs">✕</button>
         </div>
-
-        {/* Chip Info */}
-        <div className="bg-white/5 rounded-lg px-3 py-2 text-xs font-mono" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          {chip.uid} · {chip.label}
-        </div>
-
-        {/* Steps */}
-        {step === 'waiting_payment' && (
-          <div className="text-center space-y-3 py-4">
-            <Loader2 className="w-10 h-10 text-amber-400 animate-spin mx-auto" />
-            <p className="text-amber-300 font-semibold">Warte auf Zahlungsbestätigung…</p>
-            <p className="text-slate-500 text-xs">
-              Sobald die Lightning-Invoice auf der Website bezahlt wurde,<br />
-              erscheint hier die Aufforderung zum Schreiben.
-            </p>
-          </div>
-        )}
 
         {step === 'tap_to_write' && (
           <div className="text-center space-y-3 py-2">
-            <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-500/50 flex items-center justify-center mx-auto animate-pulse">
-              <Wifi className="w-8 h-8 text-amber-400" />
+            <div className="w-14 h-14 rounded-full bg-amber-500/20 border-2 border-amber-500/50 flex items-center justify-center mx-auto animate-pulse">
+              <Wifi className="w-7 h-7 text-amber-400" />
             </div>
             <p className="text-amber-300 font-bold">Chip jetzt ranhalten!</p>
-            <p className="text-slate-400 text-xs">Halte den NFC-Chip für 10 Sekunden an die Rückseite des Geräts.</p>
-            <Button
-              onClick={startHolding}
-              className="bg-amber-500/20 border-amber-500/40 text-amber-300 hover:bg-amber-500/30"
-              variant="outline"
-            >
-              Chip ist dran — Schreiben starten
+            <p className="text-slate-400 text-xs">10 Sekunden stabil halten zum Schreiben.</p>
+            <Button onClick={startHolding} variant="outline"
+              className="bg-amber-500/20 border-amber-500/40 text-amber-300 hover:bg-amber-500/30">
+              Chip ist dran — Starten
             </Button>
           </div>
         )}
 
         {step === 'holding' && (
           <div className="text-center space-y-3 py-2">
-            <div className="relative w-20 h-20 mx-auto">
-              <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-                <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(245,158,11,0.2)" strokeWidth="6" />
-                <circle cx="40" cy="40" r="34" fill="none" stroke="#f59e0b" strokeWidth="6"
-                  strokeDasharray={`${2 * Math.PI * 34}`}
-                  strokeDashoffset={`${2 * Math.PI * 34 * (1 - holdSeconds / 10)}`}
+            <div className="relative w-16 h-16 mx-auto">
+              <svg className="w-16 h-16 -rotate-90" viewBox="0 0 64 64">
+                <circle cx="32" cy="32" r="26" fill="none" stroke="rgba(245,158,11,0.2)" strokeWidth="5" />
+                <circle cx="32" cy="32" r="26" fill="none" stroke="#f59e0b" strokeWidth="5"
+                  strokeDasharray={`${2 * Math.PI * 26}`}
+                  strokeDashoffset={`${2 * Math.PI * 26 * (1 - holdSeconds / 10)}`}
                   className="transition-all duration-1000" />
               </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-xl font-black text-amber-400">
-                {10 - holdSeconds}
-              </span>
+              <span className="absolute inset-0 flex items-center justify-center text-lg font-black text-amber-400">{10 - holdSeconds}</span>
             </div>
-            <p className="text-amber-300 font-bold">Chip festhalten!</p>
-            <p className="text-slate-400 text-xs">Noch {10 - holdSeconds} Sekunden stabil halten…</p>
+            <p className="text-amber-300 font-bold text-sm">Festhalten…</p>
           </div>
         )}
 
-        {step === 'writing' && (
-          <div className="text-center space-y-3 py-4">
-            <Loader2 className="w-10 h-10 text-emerald-400 animate-spin mx-auto" />
-            <p className="text-emerald-300 font-bold">Schreibe Status auf Chip…</p>
-          </div>
-        )}
-
+        {step === 'writing'    && <div className="text-center py-4"><Loader2 className="w-8 h-8 text-emerald-400 animate-spin mx-auto" /><p className="text-emerald-300 font-bold mt-2 text-sm">Schreibe…</p></div>}
         {step === 'tap_to_verify' && (
           <div className="text-center space-y-3 py-2">
-            <div className="w-16 h-16 rounded-full bg-blue-500/20 border-2 border-blue-500/50 flex items-center justify-center mx-auto animate-pulse">
-              <Wifi className="w-8 h-8 text-blue-400" />
+            <div className="w-14 h-14 rounded-full bg-blue-500/20 border-2 border-blue-500/50 flex items-center justify-center mx-auto animate-pulse">
+              <Wifi className="w-7 h-7 text-blue-400" />
             </div>
-            <p className="text-blue-300 font-bold">Nochmal ranhalten zur Verifikation</p>
-            <p className="text-slate-400 text-xs">Halte den Chip nochmal an das Gerät um zu bestätigen.</p>
-            <Button onClick={doVerify} variant="outline"
-              className="bg-blue-500/15 border-blue-500/35 text-blue-300 hover:bg-blue-500/25">
-              Jetzt verifizieren
-            </Button>
+            <p className="text-blue-300 font-bold text-sm">Nochmal ranhalten zur Verifikation</p>
+            <Button onClick={doVerify} variant="outline" className="bg-blue-500/15 border-blue-500/35 text-blue-300">Jetzt verifizieren</Button>
           </div>
         )}
-
-        {step === 'verifying' && (
-          <div className="text-center space-y-3 py-4">
-            <Loader2 className="w-10 h-10 text-blue-400 animate-spin mx-auto" />
-            <p className="text-blue-300 font-bold">Lese Status zurück…</p>
+        {step === 'verifying'  && <div className="text-center py-4"><Loader2 className="w-8 h-8 text-blue-400 animate-spin mx-auto" /><p className="text-blue-300 font-bold mt-2 text-sm">Verifiziere…</p></div>}
+        {step === 'done_ok'    && (
+          <div className="text-center space-y-2 py-2">
+            <CheckCircle className="w-10 h-10 text-emerald-400 mx-auto" />
+            <p className="text-emerald-300 font-bold">Fertig!</p>
+            {verifiedStatus && <ChipStatusBadge status={verifiedStatus} />}
+            <Button onClick={onClose} variant="outline" className="bg-emerald-500/15 border-emerald-500/30 text-emerald-300">Schließen</Button>
           </div>
         )}
-
-        {step === 'done_ok' && (
-          <div className="text-center space-y-3 py-2">
-            <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto" />
-            <p className="text-emerald-300 font-bold text-lg">Fertig!</p>
-            {verifiedStatus && (
-              <ChipStatusBadge status={verifiedStatus} />
-            )}
-            <p className="text-slate-400 text-xs">Chip wurde erfolgreich auf <strong>valid</strong> gesetzt.</p>
-            <Button onClick={onClose} variant="outline"
-              className="bg-emerald-500/15 border-emerald-500/30 text-emerald-300">
-              Schließen
-            </Button>
-          </div>
-        )}
-
         {step === 'done_error' && (
-          <div className="text-center space-y-3 py-2">
-            <XCircle className="w-12 h-12 text-red-400 mx-auto" />
-            <p className="text-red-300 font-bold">Fehler</p>
-            <p className="text-red-400/70 text-xs">{errorMsg}</p>
-            <Button onClick={() => setStep('tap_to_write')} variant="outline"
-              className="bg-red-500/15 border-red-500/30 text-red-300">
-              Nochmal versuchen
-            </Button>
+          <div className="text-center space-y-2 py-2">
+            <XCircle className="w-10 h-10 text-red-400 mx-auto" />
+            <p className="text-red-300 text-xs">{errorMsg}</p>
+            <Button onClick={() => setStep('tap_to_write')} variant="outline" className="bg-red-500/15 border-red-500/30 text-red-300">Retry</Button>
           </div>
         )}
       </CardContent>
@@ -438,29 +486,26 @@ function WriteFlow({ scan, chip, onClose }: WriteFlowProps) {
 
 function HistoryItem({ scan, verify }: { scan: ScanResult; verify: VerifyResult }) {
   const [open, setOpen] = useState(false);
-  const dot   = verify.kind === 'verified' ? 'bg-emerald-400' : verify.kind === 'warn' ? 'bg-orange-400' : 'bg-red-400';
-  const label = verify.kind !== 'unknown' ? verify.chip.label : 'Unbekannt';
+  const chip  = verify.kind !== 'unknown' ? verify.chip : null;
+  const label = chip?.label ?? 'Unbekannt';
+  const dot   = chip?.status === 'valid' ? 'bg-emerald-400' : chip?.status === 'invalid' ? 'bg-red-400' : chip?.status === 'entwertenbeantragt' ? 'bg-orange-400' : 'bg-slate-500';
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
       <button onClick={() => setOpen(o => !o)}
         className="w-full flex items-center gap-3 p-3 hover:bg-white/5 transition-colors text-left">
-        <div className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', dot)} />
+        <div className={cn('w-2 h-2 rounded-full flex-shrink-0', dot)} />
         <div className="flex-1 min-w-0">
           <div className="text-white text-sm font-medium truncate">{label}</div>
           <div className="text-slate-500 text-xs font-mono truncate">{scan.uid}</div>
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <Badge variant="outline" className="font-mono text-xs">{scan.tamperStatus}</Badge>
-          <span className="text-slate-600 text-xs">
-            {new Date(scan.timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-          {open ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
-        </div>
+        <span className="text-slate-600 text-xs flex-shrink-0">
+          {new Date(scan.timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
+        </span>
+        {open ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
       </button>
       {open && (
-        <div className="border-t border-white/10 px-3 pb-3 pt-2 space-y-1.5">
+        <div className="border-t border-white/10 px-3 pb-3 pt-2">
           <div className="text-slate-500 text-xs font-mono break-all">{scan.uid}</div>
-          {scan.debug && <div className="text-slate-600 text-xs font-mono break-all">{scan.debug}</div>}
         </div>
       )}
     </div>
@@ -469,14 +514,13 @@ function HistoryItem({ scan, verify }: { scan: ScanResult; verify: VerifyResult 
 
 // ─── Online actions ───────────────────────────────────────────────────────────
 
-const WEBSITE_URL = 'https://Testtest123.shakespeare.wtf';
-
 type ActionState = 'idle' | 'loading' | 'done' | 'error';
 
-function OnlineActions({ scan, verify, onStartWriteFlow }: {
+function OnlineActions({ scan, verify, onStartInvoice, showingInvoice }: {
   scan: ScanResult;
   verify: VerifyResult;
-  onStartWriteFlow: () => void;
+  onStartInvoice: () => void;
+  showingInvoice: boolean;
 }) {
   const { mutateAsync: publishEvent } = usePublishAnonymous();
   const { toast } = useToast();
@@ -499,7 +543,7 @@ function OnlineActions({ scan, verify, onStartWriteFlow }: {
     try {
       await publishEvent({
         kind: KIND_VERIFY_LOG,
-        content: JSON.stringify({ uid: scan.uid, label: chip?.label ?? '', sats: chip?.sats ?? 0, tamperStatus: scan.tamperStatus, result: verify.kind }),
+        content: JSON.stringify({ uid: scan.uid, label: chip?.label ?? '', sats: chip?.sats ?? 0, result: verify.kind }),
         tags: [['t', APP_TAG], ['alt', 'Bitcoin Note online verification log']],
       });
       setVerifyState('done');
@@ -519,8 +563,8 @@ function OnlineActions({ scan, verify, onStartWriteFlow }: {
         tags: [['t', APP_TAG], ['alt', 'Bitcoin Note reload request']],
       });
       setReloadState('done');
-      toast({ title: '📤 Aufladen angefordert', description: 'Invoice auf der Website öffnen. Danach startet der Schreib-Flow hier.' });
-      onStartWriteFlow();
+      toast({ title: '📤 Anfrage gesendet', description: 'Invoice wird jetzt angezeigt.' });
+      onStartInvoice();
     } catch (e) {
       setReloadState('error');
       toast({ title: 'Fehler', description: String(e), variant: 'destructive' });
@@ -544,45 +588,51 @@ function OnlineActions({ scan, verify, onStartWriteFlow }: {
     }
   };
 
-  const anyDone = verifyState === 'done' || reloadState === 'done';
-
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-3">
-        {/* Online verifizieren */}
-        <Button onClick={handleVerify} disabled={verifyState === 'loading' || verifyState === 'done'} variant="outline"
-          className={cn('h-12 text-sm font-bold rounded-xl border transition-all',
-            verifyState === 'done'  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' :
-            verifyState === 'error' ? 'bg-red-500/15 border-red-500/35 text-red-300' :
-            'bg-blue-500/15 border-blue-500/35 text-blue-300 hover:bg-blue-500/25')}>
-          {verifyState === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> :
-           verifyState === 'done'    ? <CheckCircle className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
-          <span className="ml-2">{verifyState === 'done' ? 'Eingetragen!' : verifyState === 'error' ? 'Retry' : 'Online verifizieren'}</span>
-        </Button>
+      {/* Verify */}
+      <Button onClick={handleVerify} disabled={verifyState === 'loading' || verifyState === 'done'} variant="outline"
+        className={cn('w-full h-11 text-sm font-bold rounded-xl border transition-all',
+          verifyState === 'done'  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' :
+          verifyState === 'error' ? 'bg-red-500/15 border-red-500/35 text-red-300' :
+          'bg-blue-500/15 border-blue-500/35 text-blue-300 hover:bg-blue-500/25')}>
+        {verifyState === 'loading' ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> :
+         verifyState === 'done'    ? <CheckCircle className="w-4 h-4 mr-2" /> :
+         <Globe className="w-4 h-4 mr-2" />}
+        {verifyState === 'done' ? 'Eingetragen!' : verifyState === 'error' ? 'Retry' : 'Online verifizieren'}
+      </Button>
 
-        {/* Aufladen anfordern */}
+      {/* Aufladen — nur wenn noch kein Invoice offen */}
+      {!showingInvoice && (
         <Button onClick={handleReload} disabled={reloadState === 'loading' || reloadState === 'done'} variant="outline"
-          className={cn('h-12 text-sm font-bold rounded-xl border transition-all',
+          className={cn('w-full h-11 text-sm font-bold rounded-xl border transition-all',
             reloadState === 'done'  ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' :
             reloadState === 'error' ? 'bg-red-500/15 border-red-500/35 text-red-300' :
             'bg-amber-500/10 border-amber-500/25 text-amber-300 hover:bg-amber-500/20')}>
-          {reloadState === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> :
-           reloadState === 'done'    ? <CheckCircle className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
-          <span className="ml-2">{reloadState === 'done' ? 'Angefordert!' : reloadState === 'error' ? 'Retry' : 'Aufladen'}</span>
+          {reloadState === 'loading' ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> :
+           reloadState === 'done'    ? <CheckCircle className="w-4 h-4 mr-2" /> :
+           <Upload className="w-4 h-4 mr-2" />}
+          {reloadState === 'done' ? 'Angefordert!' : reloadState === 'error' ? 'Retry' : 'Aufladen anfordern'}
         </Button>
-      </div>
+      )}
+
+      {/* Website anschauen — direkt zum Chip */}
+      {chip && (
+        <a href={chipWebsiteUrl(chip.uid)} target="_blank" rel="noopener noreferrer"
+          className="flex items-center justify-center gap-2 w-full h-11 rounded-xl border text-sm font-bold transition-all bg-white/5 border-white/15 text-slate-300 hover:bg-white/10">
+          <ExternalLink className="w-4 h-4 text-slate-400" />
+          Schein auf Website ansehen
+        </a>
+      )}
 
       {/* Entwerten */}
       {chip && (
         <div className="pt-1 border-t border-white/10">
           {!showConfirm && invalidateState !== 'done' && (
             <button onClick={() => setShowConfirm(true)} disabled={invalidateState === 'loading'}
-              className={cn('w-full flex items-center justify-center gap-2 h-10 rounded-xl border text-xs font-bold transition-all',
-                invalidateState === 'error'
-                  ? 'bg-red-500/15 border-red-500/30 text-red-300'
-                  : 'bg-red-500/8 border-red-500/20 text-red-400/70 hover:bg-red-500/12 hover:text-red-400')}>
-              {invalidateState === 'loading' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              {invalidateState === 'error' ? 'Fehler – Retry' : 'Entwertung beantragen'}
+              className="w-full flex items-center justify-center gap-2 h-9 rounded-xl border text-xs font-bold transition-all bg-red-500/8 border-red-500/20 text-red-400/70 hover:bg-red-500/12 hover:text-red-400">
+              {invalidateState === 'loading' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+              Entwertung beantragen
             </button>
           )}
           {showConfirm && (
@@ -590,30 +640,23 @@ function OnlineActions({ scan, verify, onStartWriteFlow }: {
               <p className="text-red-300 text-xs text-center font-semibold">Schein wirklich entwerten?</p>
               <div className="grid grid-cols-2 gap-2">
                 <button onClick={handleInvalidate}
-                  className="h-9 rounded-lg border border-red-500/30 bg-red-500/15 text-red-300 text-xs font-bold hover:bg-red-500/25">
-                  <Check className="w-3.5 h-3.5 inline mr-1" /> Ja
+                  className="h-8 rounded-lg border border-red-500/30 bg-red-500/15 text-red-300 text-xs font-bold">
+                  <Check className="w-3 h-3 inline mr-1" /> Ja
                 </button>
                 <button onClick={() => setShowConfirm(false)}
-                  className="h-9 rounded-lg border border-white/15 bg-white/5 text-slate-400 text-xs font-bold hover:bg-white/10">
+                  className="h-8 rounded-lg border border-white/15 bg-white/5 text-slate-400 text-xs font-bold">
                   Abbrechen
                 </button>
               </div>
             </div>
           )}
           {invalidateState === 'done' && (
-            <div className="flex items-center justify-center gap-2 h-10 rounded-xl border border-red-500/20 bg-red-500/8">
+            <div className="flex items-center justify-center gap-2 h-9 rounded-xl border border-red-500/20 bg-red-500/8">
               <CheckCircle className="w-3.5 h-3.5 text-red-400" />
               <span className="text-red-400 text-xs font-bold">Entwertung beantragt</span>
             </div>
           )}
         </div>
-      )}
-
-      {anyDone && (
-        <a href={WEBSITE_URL} target="_blank" rel="noopener noreferrer"
-          className="flex items-center justify-center gap-2 w-full h-11 rounded-xl border text-sm font-bold transition-all bg-white/5 border-white/15 text-slate-300 hover:bg-white/10">
-          <Globe className="w-4 h-4 text-slate-400" /> Website anschauen
-        </a>
       )}
     </div>
   );
@@ -622,11 +665,13 @@ function OnlineActions({ scan, verify, onStartWriteFlow }: {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function NFCScanner() {
-  const [scanStatus, setScanStatus] = useState<ScanStatus>('idle');
-  const [lastScan,   setLastScan]   = useState<ScanResult | null>(null);
-  const [history,    setHistory]    = useState<Array<{ scan: ScanResult; verify: VerifyResult }>>([]);
-  const [errorMsg,   setErrorMsg]   = useState<string | null>(null);
+  const [scanStatus,    setScanStatus]    = useState<ScanStatus>('idle');
+  const [lastScan,      setLastScan]      = useState<ScanResult | null>(null);
+  const [history,       setHistory]       = useState<Array<{ scan: ScanResult; verify: VerifyResult }>>([]);
+  const [errorMsg,      setErrorMsg]      = useState<string | null>(null);
+  const [showInvoice,   setShowInvoice]   = useState(false);
   const [showWriteFlow, setShowWriteFlow] = useState(false);
+  const [paidHash,      setPaidHash]      = useState<string | null>(null);
   const { toast } = useToast();
   const native = isNativeAvailable();
 
@@ -636,7 +681,9 @@ export function NFCScanner() {
     setLastScan(result);
     setScanStatus('scanning');
     setErrorMsg(null);
+    setShowInvoice(false);
     setShowWriteFlow(false);
+    setPaidHash(null);
   }, []);
 
   const handleError = useCallback((msg: string) => {
@@ -652,6 +699,17 @@ export function NFCScanner() {
     }
   }, [lastScan]);
 
+  // Hört auf Kind 3493 (Zahlung bestätigt von Website)
+  const currentChip = lastScan ? (classify(lastScan).kind !== 'unknown' ? (classify(lastScan) as { kind: 'verified' | 'warn'; chip: ChipEntry }).chip : null) : null;
+  const { data: paymentEvent } = usePaymentConfirmed(lastScan?.uid ?? null);
+
+  useEffect(() => {
+    if (paymentEvent && showInvoice && !showWriteFlow) {
+      setShowWriteFlow(true);
+      setShowInvoice(false);
+    }
+  }, [paymentEvent, showInvoice, showWriteFlow]);
+
   const startScan = useCallback(async () => {
     setScanStatus('scanning');
     setErrorMsg(null);
@@ -666,27 +724,25 @@ export function NFCScanner() {
   }, []);
 
   const currentVerify = lastScan ? classify(lastScan) : null;
-  const currentChip   = currentVerify?.kind !== 'unknown' ? currentVerify?.chip : null;
 
   return (
-    <div className="w-full max-w-md mx-auto space-y-5">
-      {/* Mode badge */}
-      <div className="flex justify-center">
-        {native
-          ? <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/30 text-xs"><Zap className="w-3 h-3 mr-1" />Native IsoDep · GetTTStatus 0xF7</Badge>
-          : <Badge className="bg-slate-700/60 text-slate-400 border-slate-600 text-xs"><WifiOff className="w-3 h-3 mr-1" />Nur in nativer APK</Badge>
-        }
-      </div>
+    <div className="w-full max-w-md mx-auto space-y-4">
 
       {/* Scan button */}
-      <div className="flex justify-center py-2">
+      <div className="flex justify-center pt-2">
         <ScanButton status={scanStatus} hasResult={lastScan !== null} onScan={startScan} onStop={stopScan} />
       </div>
 
       {/* Hints */}
-      {scanStatus === 'idle' && !lastScan && <p className="text-center text-slate-500 text-sm">NTAG 424 TT Tag an die Rückseite halten</p>}
-      {scanStatus === 'scanning' && !lastScan && <p className="text-center text-blue-300 text-sm animate-pulse">Halte den Tag an dein Gerät…</p>}
-      {scanStatus === 'scanning' && lastScan  && <p className="text-center text-blue-400/70 text-xs">Bereit für nächsten Tag · Stopp zum Beenden</p>}
+      {scanStatus === 'idle' && !lastScan && (
+        <p className="text-center text-slate-500 text-sm">NTAG 424 Tag an die Rückseite halten</p>
+      )}
+      {scanStatus === 'scanning' && !lastScan && (
+        <p className="text-center text-blue-300 text-sm animate-pulse">Halte den Tag an dein Gerät…</p>
+      )}
+      {scanStatus === 'scanning' && lastScan && (
+        <p className="text-center text-blue-400/70 text-xs">Bereit für nächsten Tag · Stopp zum Beenden</p>
+      )}
 
       {/* Error */}
       {errorMsg && (
@@ -701,53 +757,51 @@ export function NFCScanner() {
       {/* Result */}
       {lastScan && currentVerify && (
         <div className="space-y-3">
-          <Card className={cn('border overflow-hidden',
-            currentVerify.kind === 'verified' && 'border-emerald-500/30 bg-emerald-500/5',
-            currentVerify.kind === 'warn'     && 'border-orange-500/30 bg-orange-500/5',
-            currentVerify.kind === 'unknown'  && 'border-red-500/20 bg-red-500/5',
-          )}>
-            <CardContent className="p-0">
-              <VerifyBadge verify={currentVerify} scan={lastScan} />
-            </CardContent>
-          </Card>
+          {/* Result card — kein Tamper mehr */}
+          <ResultCard verify={currentVerify} scan={lastScan} />
 
+          {/* UID */}
           <UIDRow uid={lastScan.uid} />
 
-          {(currentVerify.kind === 'warn' || currentVerify.kind === 'unknown') && (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
-                <div className="text-slate-500 text-xs mb-0.5">Tamper-Status</div>
-                <div className="font-mono text-white text-sm font-bold">{lastScan.tamperStatus}</div>
-              </div>
-              <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
-                <div className="text-slate-500 text-xs mb-0.5">Zeitstempel</div>
-                <div className="text-white text-sm font-mono">{new Date(lastScan.timestamp).toLocaleTimeString('de-DE')}</div>
-              </div>
-            </div>
-          )}
-
-          {/* Schreib-Flow wenn aktiv */}
+          {/* Write Flow */}
           {showWriteFlow && currentChip && (
             <WriteFlow scan={lastScan} chip={currentChip} onClose={() => setShowWriteFlow(false)} />
           )}
 
-          {/* Online Actions */}
+          {/* Invoice Panel */}
+          {showInvoice && currentChip && !showWriteFlow && (
+            <InvoicePanel
+              chip={currentChip}
+              onPaid={(hash) => {
+                setPaidHash(hash);
+                setShowWriteFlow(true);
+                setShowInvoice(false);
+              }}
+            />
+          )}
+
+          {/* Actions — nur wenn kein Invoice/WriteFlow aktiv */}
           {!showWriteFlow && (
             <div className="pt-1">
-              <p className="text-slate-500 text-xs text-center mb-3">Ergebnis eintragen, Aufladen anfordern oder Entwerten:</p>
-              <OnlineActions
-                scan={lastScan}
-                verify={currentVerify}
-                onStartWriteFlow={() => setShowWriteFlow(true)}
-              />
+              <p className="text-slate-500 text-xs text-center mb-2">
+                {showInvoice ? 'Invoice offen — bezahle um fortzufahren:' : 'Aktionen:'}
+              </p>
+              {!showInvoice && (
+                <OnlineActions
+                  scan={lastScan}
+                  verify={currentVerify}
+                  onStartInvoice={() => setShowInvoice(true)}
+                  showingInvoice={showInvoice}
+                />
+              )}
             </div>
           )}
 
-          {currentVerify.kind !== 'verified' && <RawDataPanel scan={lastScan} verify={currentVerify} />}
           <p className="text-center text-slate-600 text-xs">Nächsten Tag einfach ranhalten</p>
         </div>
       )}
 
+      {/* Not native */}
       {!native && (
         <Card className="border-slate-700 bg-slate-800/40">
           <CardContent className="py-4 px-4 text-center space-y-2">
@@ -760,7 +814,7 @@ export function NFCScanner() {
 
       {/* History */}
       {history.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2 pt-2">
           <div className="flex items-center justify-between">
             <h3 className="text-slate-500 text-xs font-medium uppercase tracking-wider">Verlauf ({history.length})</h3>
             <button onClick={() => { setHistory([]); setLastScan(null); setScanStatus('idle'); }}
