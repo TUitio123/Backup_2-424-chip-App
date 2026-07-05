@@ -1,6 +1,35 @@
-# AGENTS.md — NTAG 424 TT Scanner App
+# AGENTS.md — NTAG 424 TT Scanner App (Backup_1)
 
 Dieses Dokument richtet sich an KI-Assistenten (Claude, GPT, etc.) die an diesem Projekt arbeiten. Es erklaert alle kritischen Abhaengigkeiten, den Build-Prozess, haeufige Fallstricke und gibt praezise Anweisungen fuer haeufige Aufgaben.
+
+**Backup-Generation:** Backup_1 (erstellt aus Backup-424-chip-App am 05.07.2026)
+
+---
+
+## BACKUP-ROTATIONS-PROTOKOLL
+
+### Wie es funktioniert
+
+Jedes Mal wenn ein neuer KI-Bot die Arbeit uebernimmt, erstellt er **zwei neue Repos** mit der naechsten Nummer:
+- `Backup_N-424-chip-App` (Android-App)
+- `Backup_N-424-chip-website` (Website)
+
+### Backup-Historie
+
+| Generation | App-Repo | Website-Repo | Erstellt | Bot |
+|---|---|---|---|---|
+| Backup | `TUitio123/Backup-424-chip-App` | `TUitio123/Backup-424-chip-website` | 04-05.07.2026 | Claude (abgestuerzt) |
+| **Backup_1** | **`TUitio123/Backup_1-424-chip-App`** | **`TUitio123/Backup_1-424-chip-website`** | **05.07.2026** | **Claude Opus 4.6 (backup-424-sync)** |
+| Backup_2 | (naechster Bot erstellt diese) | (naechster Bot erstellt diese) | — | — |
+
+### Anweisungen fuer den naechsten KI-Bot
+
+1. **Klone die aktuellsten Backup-Repos** (Backup_1) zuerst
+2. **Erstelle neue Repos:** `Backup_2-424-chip-App` + `Backup_2-424-chip-website` (privat)
+3. **Kopiere den Inhalt** von Backup_1 in Backup_2
+4. **Arbeite in Backup_2** weiter
+5. **Aktualisiere diese AGENTS.md** und die README.md mit dem neuen Stand
+6. **Pushe alles** in Backup_2
 
 ---
 
