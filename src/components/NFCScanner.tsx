@@ -34,7 +34,7 @@ import {
 } from '@/lib/ntag424';
 import {
   lookupChip, ChipEntry,
-  KIND_VERIFY_LOG, KIND_RELOAD_REQUEST, KIND_INVALIDATE_REQUEST, APP_TAG,
+  KIND_VERIFY_LOG, KIND_RELOAD_REQUEST, KIND_INVALIDATE_REQUEST, KIND_PAYMENT_CONFIRMED, APP_TAG,
 } from '@/lib/chipRegistry';
 import { useToast } from '@/hooks/useToast';
 import { usePaymentConfirmed, useChipPaymentStatus } from '@/hooks/usePaymentConfirmed';
@@ -1105,6 +1105,18 @@ export function NFCScanner() {
   }, []);
 
   const chip = lastScan ? lookupChip(lastScan.uid) : null;
+  const { mutateAsync: publishAnon } = usePublishAnonymous();
+
+  // Nach Aufladen: Kind-3493 type:"reload" publishen damit Website Status updated
+  const publishReloadConfirm = useCallback(async (uid: string, paymentHash: string, sats: number) => {
+    try {
+      await publishAnon({
+        kind: KIND_PAYMENT_CONFIRMED,
+        content: JSON.stringify({ uid, paymentHash, sats, type: 'reload', paidAt: new Date().toISOString() }),
+        tags: [['t', APP_TAG], ['alt', 'Bitcoin Note reload payment confirmed']],
+      });
+    } catch { /* ignore — website poll will catch it */ }
+  }, [publishAnon]);
 
   // Zeitstempel des letzten Scans — nur Kind-3493 Events DANACH zaehlen
   const [scanTimestamp, setScanTimestamp] = useState(() => Math.floor(Date.now() / 1000));
@@ -1234,7 +1246,9 @@ export function NFCScanner() {
             <InvoicePanel
               chip={chip}
               chipSats={lastScan.chipSats}
-              onPaid={() => {
+              onPaid={(paymentHash) => {
+                // Kind-3493 type:"reload" publishen → Website sieht sofort "aufgeladen"
+                void publishReloadConfirm(lastScan.uid, paymentHash, lastScan.chipSats > 0 ? lastScan.chipSats : chip.sats);
                 setShowWriteValid(true);
                 setShowInvoice(false);
               }}
