@@ -37,7 +37,7 @@ import {
   KIND_VERIFY_LOG, KIND_RELOAD_REQUEST, KIND_INVALIDATE_REQUEST, APP_TAG,
 } from '@/lib/chipRegistry';
 import { useToast } from '@/hooks/useToast';
-import { usePaymentConfirmed } from '@/hooks/usePaymentConfirmed';
+import { usePaymentConfirmed, useChipPaymentStatus } from '@/hooks/usePaymentConfirmed';
 import { usePublishAnonymous } from '@/hooks/usePublishAnonymous';
 import { LNBITS_CONFIG, calcReloadFee } from '@/lib/lnbitsConfig';
 
@@ -1118,9 +1118,17 @@ export function NFCScanner() {
     scanTimestamp,
   );
 
+  // Globaler Chip-Status laut Website (neuestes Kind-3493, ohne since-Filter)
+  const { data: chipWebStatus } = useChipPaymentStatus(lastScan?.uid ?? null);
+
+  // Website sagt "aufgeladen" aber Chip ist noch invalid → WriteValid anbieten
+  const websiteSaysValid = chipWebStatus?.type === 'reload';
+  const chipIsInvalid = lastScan?.chipStatus === 'invalid';
+  const shouldOfferWriteValid = websiteSaysValid && chipIsInvalid && !showWriteValid && !showEntwerten;
+
   useEffect(() => {
     // paymentEvent existiert UND Invoice-Panel ist offen → Zahlung eingegangen
-    if (paymentEvent && showInvoice && !showWriteValid) {
+    if (paymentEvent && paymentEvent.type === 'reload' && showInvoice && !showWriteValid) {
       setShowWriteValid(true);
       setShowInvoice(false);
       toast({ title: '💰 Zahlung bestätigt!', description: 'Chip wird auf valid gesetzt.' });
@@ -1177,6 +1185,31 @@ export function NFCScanner() {
         <div className="space-y-3">
           <ResultCard scan={lastScan} chip={chip} />
           <UIDRow uid={lastScan.uid} />
+
+          {/* Website sagt "aufgeladen" aber Chip ist noch invalid → valid schreiben */}
+          {shouldOfferWriteValid && chip && (
+            <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(16,185,129,0.3)' }}>
+              <div className="px-4 py-3 flex items-center gap-2"
+                style={{ background: 'rgba(16,185,129,0.08)', borderBottom: '1px solid rgba(16,185,129,0.15)' }}>
+                <ShieldCheck className="w-5 h-5 flex-shrink-0" style={{ color: '#34d399' }} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold" style={{ color: '#34d399' }}>Website: Aufgeladen</p>
+                  <p className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                    Chip zeigt noch &quot;invalid&quot; — jetzt auf &quot;valid&quot; setzen (ohne erneut zu zahlen)
+                  </p>
+                </div>
+              </div>
+              <div className="p-4">
+                <button
+                  onClick={() => setShowWriteValid(true)}
+                  className="w-full h-11 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99]"
+                  style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#34d399' }}>
+                  <ShieldCheck className="w-4 h-4" />
+                  Chip jetzt auf &quot;valid&quot; setzen
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* APDU Dump Log from scan */}
           {lastScan.debug && <DumpLog dump={lastScan.debug} />}
