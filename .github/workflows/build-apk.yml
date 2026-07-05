@@ -99,11 +99,25 @@ jobs:
           import java.nio.charset.StandardCharsets;
           import java.util.Arrays;
 
+          /**
+           * Ntag424Plugin — NTAG 424 DNA NFC Scanner + Status-Writer
+           *
+           * tagRead event payload:
+           *   uid         : String  — Chip-UID (hex, uppercase, no colons)
+           *   chipStatus  : String  — Status aus File 02 ("valid" / "invalid" / "entwertenbeantragt")
+           *   chipSats    : int     — Sats aus File 03 (raw int, 0 wenn nicht geschrieben)
+           *   debug       : String  — APDU dump log (alle Befehle + Antworten)
+           *
+           * Methods:
+           *   startScan()   — beginnt NFC-Scan-Modus
+           *   stopScan()    — beendet Scan-Modus
+           *   writeStatus() — schreibt Status-String in File 02
+           *   readStatus()  — liest Status-String aus File 02
+           */
           @CapacitorPlugin(name = "Ntag424")
           public class Ntag424Plugin extends Plugin {
               private static final String TAG = "Ntag424Plugin";
               private boolean scanning = false;
-              private Tag pendingWriteTag = null;
               private PluginCall pendingWriteCall = null;
               private PluginCall pendingReadCall  = null;
 
@@ -111,7 +125,6 @@ jobs:
                   (byte)0xD2,(byte)0x76,(byte)0x00,(byte)0x00,(byte)0x85,(byte)0x01,(byte)0x01
               };
 
-              // ── startScan ──────────────────────────────────────────────────
               @PluginMethod
               public void startScan(PluginCall call) {
                   android.nfc.NfcAdapter a = android.nfc.NfcAdapter.getDefaultAdapter(getContext());
@@ -126,211 +139,219 @@ jobs:
                   call.resolve();
               }
 
-              // ── writeStatus ───────────────────────────────────────────────
-              // Called from JS when user should tap chip. Waits for next handleTag().
               @PluginMethod
               public void writeStatus(PluginCall call) {
                   pendingWriteCall = call;
                   call.setKeepAlive(true);
-                  // actual write happens in handleTag()
               }
 
-              // ── readStatus ────────────────────────────────────────────────
               @PluginMethod
               public void readStatus(PluginCall call) {
                   pendingReadCall = call;
                   call.setKeepAlive(true);
               }
 
-              // ── handleTag (called from MainActivity.onNewIntent) ──────────
               public void handleTag(Tag tag) {
                   String uid = toHex(tag.getId()).toUpperCase();
                   IsoDep iso = IsoDep.get(tag);
                   if (iso == null) {
-                      emitResult(uid, "UNKNOWN", "NO_ISODEP");
+                      emitResult(uid, "UNKNOWN", 0, "NO_ISODEP");
                       return;
                   }
 
-                  // Handle pending write
                   if (pendingWriteCall != null) {
-                      final PluginCall wCall = pendingWriteCall;
-                      pendingWriteCall = null;
-                      new Thread(() -> doWrite(tag, iso, uid, wCall)).start();
+                      final PluginCall c = pendingWriteCall; pendingWriteCall = null;
+                      new Thread(() -> doWrite(iso, uid, c)).start();
                       return;
                   }
-
-                  // Handle pending read
                   if (pendingReadCall != null) {
-                      final PluginCall rCall = pendingReadCall;
-                      pendingReadCall = null;
-                      new Thread(() -> doRead(iso, uid, rCall)).start();
+                      final PluginCall c = pendingReadCall; pendingReadCall = null;
+                      new Thread(() -> doRead(iso, uid, c)).start();
                       return;
                   }
-
-                  // Normal scan
                   if (!scanning) return;
-                  new Thread(() -> {
-                      try {
-                          iso.connect();
-                          iso.setTimeout(5000);
-                          String tamperStatus = readTamperStatus(iso, uid);
-                          emitResult(uid, tamperStatus, "OK");
-                      } catch (Exception e) {
-                          emitResult(uid, "UNKNOWN", "ERR:" + e.getMessage());
-                      } finally {
-                          try { iso.close(); } catch (Exception ignored) {}
-                      }
-                  }).start();
+                  new Thread(() -> doFullScan(iso, uid)).start();
               }
 
-              // ── doWrite: schreibt Status-String in NDEF File 2 ────────────
-              // NTAG 424 mit allen Keys = 00..00 (unset/default)
-              // File 2 = Standard Data File, FileNo=02, max 256 bytes
-              // Write via ISO 7816 Write Data command (0x8D)
-              private void doWrite(Tag tag, IsoDep iso, String uid, PluginCall call) {
+              // ── Full scan: reads Status (File 02) + Sats (File 03) ────────────
+              private void doFullScan(IsoDep iso, String uid) {
+                  StringBuilder dump = new StringBuilder();
+                  dump.append("=== SCAN ").append(uid).append(" ===\n");
                   try {
                       iso.connect();
-                      iso.setTimeout(10000);
+                      iso.setTimeout(8000);
 
+                      // 1. SELECT Application
+                      if (!selectApp(iso, uid, dump)) {
+                          emitResult(uid, "valid", 0, dump.toString());
+                          return;
+                      }
+
+                      // 2. Read File 02 — Status string
+                      String chipStatus = readFile02(iso, uid, dump);
+
+                      // 3. Read File 03 — Sats (4-byte big-endian int)
+                      int chipSats = readFile03(iso, uid, dump);
+
+                      dump.append("=== RESULT status=").append(chipStatus)
+                          .append(" sats=").append(chipSats).append(" ===\n");
+
+                      Log.i(TAG, dump.toString());
+                      emitResult(uid, chipStatus, chipSats, dump.toString());
+
+                  } catch (Exception e) {
+                      dump.append("EXCEPTION: ").append(e.getMessage()).append("\n");
+                      Log.e(TAG, dump.toString());
+                      emitResult(uid, "valid", 0, dump.toString());
+                  } finally {
+                      try { iso.close(); } catch (Exception ignored) {}
+                  }
+              }
+
+              // ── Read File 02 (Status string, 32 bytes) ────────────────────────
+              private String readFile02(IsoDep iso, String uid, StringBuilder dump) {
+                  try {
+                      // ReadData: CLA=90 INS=AD P1=00 P2=00 Lc=07 [FileNo=02 Offset=000000 Len=200000] Le=00
+                      byte[] cmd = { (byte)0x90,(byte)0xAD,0x00,0x00,0x07, 0x02,0x00,0x00,0x00,0x20,0x00,0x00,0x00 };
+                      dump.append("ReadFile02 CMD: ").append(toHex(cmd)).append("\n");
+                      byte[] resp = iso.transceive(cmd);
+                      dump.append("ReadFile02 RSP: ").append(toHex(resp)).append("\n");
+                      if (resp == null || resp.length < 2) return "valid";
+                      int sw1 = resp[resp.length-2]&0xFF, sw2 = resp[resp.length-1]&0xFF;
+                      if (sw1==0x91 && sw2==0x00) {
+                          byte[] data = Arrays.copyOf(resp, resp.length-2);
+                          int len = data.length;
+                          while (len>0 && data[len-1]==0) len--;
+                          String s = new String(data, 0, len, StandardCharsets.UTF_8).trim().toLowerCase();
+                          if (s.equals("invalid") || s.equals("entwertenbeantragt")) return s;
+                          return "valid";
+                      }
+                      dump.append("ReadFile02: SW=").append(String.format("%02X%02X",sw1,sw2)).append(" (no status written yet)\n");
+                      return "valid";
+                  } catch (Exception e) {
+                      dump.append("ReadFile02 ERR: ").append(e.getMessage()).append("\n");
+                      return "valid";
+                  }
+              }
+
+              // ── Read File 03 (Sats, 4-byte big-endian) ────────────────────────
+              private int readFile03(IsoDep iso, String uid, StringBuilder dump) {
+                  try {
+                      // ReadData: CLA=90 INS=AD P1=00 P2=00 Lc=07 [FileNo=03 Offset=000000 Len=040000] Le=00
+                      byte[] cmd = { (byte)0x90,(byte)0xAD,0x00,0x00,0x07, 0x03,0x00,0x00,0x00,0x04,0x00,0x00,0x00 };
+                      dump.append("ReadFile03 CMD: ").append(toHex(cmd)).append("\n");
+                      byte[] resp = iso.transceive(cmd);
+                      dump.append("ReadFile03 RSP: ").append(toHex(resp)).append("\n");
+                      if (resp == null || resp.length < 6) return 0;
+                      int sw1 = resp[resp.length-2]&0xFF, sw2 = resp[resp.length-1]&0xFF;
+                      if (sw1==0x91 && sw2==0x00 && resp.length >= 6) {
+                          int sats = ((resp[0]&0xFF)<<24)|((resp[1]&0xFF)<<16)|((resp[2]&0xFF)<<8)|(resp[3]&0xFF);
+                          return sats;
+                      }
+                      return 0;
+                  } catch (Exception e) {
+                      dump.append("ReadFile03 ERR: ").append(e.getMessage()).append("\n");
+                      return 0;
+                  }
+              }
+
+              // ── Write File 02 (Status) ────────────────────────────────────────
+              private void doWrite(IsoDep iso, String uid, PluginCall call) {
+                  StringBuilder dump = new StringBuilder();
+                  dump.append("=== WRITE STATUS ").append(uid).append(" ===\n");
+                  try {
+                      iso.connect(); iso.setTimeout(10000);
                       String statusToWrite = call.getString("status", "valid");
-                      // Pad/truncate to 32 bytes
+                      dump.append("Writing status: ").append(statusToWrite).append("\n");
                       byte[] statusBytes = statusToWrite.getBytes(StandardCharsets.UTF_8);
                       if (statusBytes.length > 32) statusBytes = Arrays.copyOf(statusBytes, 32);
                       byte[] payload = new byte[32];
                       System.arraycopy(statusBytes, 0, payload, 0, statusBytes.length);
 
-                      // 1. SELECT Application
-                      if (!selectApp(iso, uid)) {
-                          resolveWriteError(call, "SELECT_FAILED", "App-Selektion fehlgeschlagen");
-                          return;
+                      if (!selectApp(iso, uid, dump)) {
+                          resolveWriteError(call, "SELECT_FAILED", "App-Selektion fehlgeschlagen\n"+dump); return;
                       }
 
-                      // 2. WriteData to File 02, offset 0x000000, length 32
-                      // CLA=90 INS=8D P1=00 P2=00 Lc=07+32 [FileNo=02 Offset(3) Len(3) Data(32)]
-                      byte[] writeCmd = new byte[7 + 32 + 1];
-                      writeCmd[0] = (byte)0x90; writeCmd[1] = (byte)0x8D;
-                      writeCmd[2] = 0x00;       writeCmd[3] = 0x00;
-                      writeCmd[4] = (byte)(7 + 32); // Lc
-                      writeCmd[5] = 0x02;        // FileNo = 02
-                      writeCmd[6] = 0x00; writeCmd[7] = 0x00; writeCmd[8] = 0x00; // Offset
-                      writeCmd[9] = (byte)32; writeCmd[10] = 0x00; writeCmd[11] = 0x00; // Length
+                      // WriteData File 02
+                      byte[] writeCmd = new byte[13 + 32];
+                      writeCmd[0]=(byte)0x90; writeCmd[1]=(byte)0x8D;
+                      writeCmd[2]=0x00; writeCmd[3]=0x00; writeCmd[4]=(byte)(7+32);
+                      writeCmd[5]=0x02; writeCmd[6]=0x00; writeCmd[7]=0x00; writeCmd[8]=0x00;
+                      writeCmd[9]=(byte)32; writeCmd[10]=0x00; writeCmd[11]=0x00;
                       System.arraycopy(payload, 0, writeCmd, 12, 32);
-                      writeCmd[writeCmd.length - 1] = 0x00; // Le
+                      writeCmd[44]=0x00;
+                      dump.append("WriteFile02 CMD: ").append(toHex(writeCmd)).append("\n");
+                      byte[] wr = iso.transceive(writeCmd);
+                      dump.append("WriteFile02 RSP: ").append(toHex(wr)).append("\n");
 
-                      byte[] writeResp = iso.transceive(writeCmd);
-                      Log.i(TAG, uid + " WRITE resp=" + toHex(writeResp));
-
-                      if (isNative9100(writeResp)) {
+                      if (isNative9100(wr)) {
                           JSObject r = new JSObject();
-                          r.put("success", true);
+                          r.put("success", true); r.put("dump", dump.toString());
                           call.resolve(r);
                       } else {
-                          resolveWriteError(call, "WRITE_FAILED", "SW=" + toHex(writeResp));
+                          resolveWriteError(call, "WRITE_FAILED", "SW="+toHex(wr)+"\n"+dump);
                       }
                   } catch (Exception e) {
-                      resolveWriteError(call, "EXCEPTION", e.getMessage());
+                      resolveWriteError(call, "EXCEPTION", e.getMessage()+"\n"+dump);
                   } finally {
                       try { iso.close(); } catch (Exception ignored) {}
                   }
               }
 
-              // ── doRead: liest Status-String aus File 2 ────────────────────
+              // ── Read File 02 via readStatus call ──────────────────────────────
               private void doRead(IsoDep iso, String uid, PluginCall call) {
+                  StringBuilder dump = new StringBuilder();
+                  dump.append("=== READ STATUS ").append(uid).append(" ===\n");
                   try {
-                      iso.connect();
-                      iso.setTimeout(5000);
-
-                      if (!selectApp(iso, uid)) {
-                          resolveReadError(call, "SELECT_FAILED", "App-Selektion fehlgeschlagen");
-                          return;
+                      iso.connect(); iso.setTimeout(5000);
+                      if (!selectApp(iso, uid, dump)) {
+                          resolveReadError(call, "SELECT_FAILED", "App-Selektion fehlgeschlagen\n"+dump); return;
                       }
-
-                      // ReadData from File 02, offset 0, length 32
-                      // CLA=90 INS=AD P1=00 P2=00 Lc=07 [FileNo Offset(3) Len(3)] Le=00
-                      byte[] readCmd = {
-                          (byte)0x90, (byte)0xAD, 0x00, 0x00, 0x07,
-                          0x02, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00
-                      };
-                      byte[] readResp = iso.transceive(readCmd);
-                      Log.i(TAG, uid + " READ resp=" + toHex(readResp));
-
-                      if (readResp == null || readResp.length < 2) {
-                          resolveReadError(call, "READ_FAILED", "Keine Antwort"); return;
-                      }
-                      int sw1 = readResp[readResp.length-2] & 0xFF;
-                      int sw2 = readResp[readResp.length-1] & 0xFF;
-                      if (sw1 == 0x91 && sw2 == 0x00) {
-                          byte[] data = Arrays.copyOf(readResp, readResp.length - 2);
-                          // Trim nulls
-                          int len = data.length;
-                          while (len > 0 && data[len-1] == 0) len--;
-                          String status = new String(data, 0, len, StandardCharsets.UTF_8).trim();
-                          JSObject r = new JSObject();
-                          r.put("success", true);
-                          r.put("status", status.isEmpty() ? "valid" : status);
-                          call.resolve(r);
-                      } else {
-                          resolveReadError(call, "READ_FAILED", "SW=" + toHex(readResp));
-                      }
+                      String status = readFile02(iso, uid, dump);
+                      JSObject r = new JSObject();
+                      r.put("success", true); r.put("status", status); r.put("dump", dump.toString());
+                      call.resolve(r);
                   } catch (Exception e) {
-                      resolveReadError(call, "EXCEPTION", e.getMessage());
+                      resolveReadError(call, "EXCEPTION", e.getMessage()+"\n"+dump);
                   } finally {
                       try { iso.close(); } catch (Exception ignored) {}
                   }
               }
 
-              // ── Helpers ───────────────────────────────────────────────────
-              private boolean selectApp(IsoDep iso, String uid) throws Exception {
-                  byte[] selApdu = new byte[5 + DF_NAME.length + 1];
-                  selApdu[0]=0x00; selApdu[1]=(byte)0xA4; selApdu[2]=0x04;
-                  selApdu[3]=0x00; selApdu[4]=(byte)DF_NAME.length;
-                  System.arraycopy(DF_NAME, 0, selApdu, 5, DF_NAME.length);
-                  selApdu[selApdu.length-1]=0x00;
-                  byte[] selResp = iso.transceive(selApdu);
-                  Log.d(TAG, uid + " SEL=" + toHex(selResp));
-                  return isISO9000(selResp);
+              // ── Helpers ───────────────────────────────────────────────────────
+              private boolean selectApp(IsoDep iso, String uid, StringBuilder dump) throws Exception {
+                  byte[] cmd = new byte[5+DF_NAME.length+1];
+                  cmd[0]=0x00; cmd[1]=(byte)0xA4; cmd[2]=0x04; cmd[3]=0x00; cmd[4]=(byte)DF_NAME.length;
+                  System.arraycopy(DF_NAME,0,cmd,5,DF_NAME.length); cmd[cmd.length-1]=0x00;
+                  dump.append("SelectApp CMD: ").append(toHex(cmd)).append("\n");
+                  byte[] resp = iso.transceive(cmd);
+                  dump.append("SelectApp RSP: ").append(toHex(resp)).append("\n");
+                  return resp!=null && resp.length>=2 && resp[resp.length-2]==(byte)0x90 && resp[resp.length-1]==(byte)0x00;
               }
 
-              private String readTamperStatus(IsoDep iso, String uid) throws Exception {
-                  if (!selectApp(iso, uid)) return "SELECT_FAILED";
-                  byte[] ttCmd = {(byte)0x90,(byte)0xF7,0x00,0x00,0x00};
-                  byte[] ttResp = iso.transceive(ttCmd);
-                  Log.i(TAG, uid + " TT=" + toHex(ttResp));
-                  if (ttResp == null || ttResp.length < 4) return "UNKNOWN";
-                  int sw1 = ttResp[ttResp.length-2] & 0xFF;
-                  int sw2 = ttResp[ttResp.length-1] & 0xFF;
-                  if (sw1==0x91 && sw2==0x00) { return "" + (char)(ttResp[0]&0xFF) + (char)(ttResp[1]&0xFF); }
-                  if (sw1==0x91 && sw2==0xAD) return "AUTH_REQUIRED";
-                  if (sw1==0x91 && sw2==0x1C) return "II";
-                  return String.format("SW_%02X%02X", sw1, sw2);
-              }
-
-              private boolean isISO9000(byte[] r) {
-                  return r!=null && r.length>=2 && r[r.length-2]==(byte)0x90 && r[r.length-1]==(byte)0x00;
+              private static String toHex(byte[] b) {
+                  if (b==null) return "null";
+                  StringBuilder sb=new StringBuilder();
+                  for (byte x:b) sb.append(String.format("%02X",x));
+                  return sb.toString();
               }
               private boolean isNative9100(byte[] r) {
                   return r!=null && r.length>=2 && r[r.length-2]==(byte)0x91 && r[r.length-1]==(byte)0x00;
               }
-              private static String toHex(byte[] b) {
-                  if (b==null) return "null";
-                  StringBuilder sb = new StringBuilder();
-                  for (byte x : b) sb.append(String.format("%02X", x));
-                  return sb.toString();
-              }
-              private void emitResult(String uid, String tamperStatus, String debug) {
+              private void emitResult(String uid, String chipStatus, int chipSats, String dump) {
                   JSObject r = new JSObject();
-                  r.put("uid", uid); r.put("tamperStatus", tamperStatus); r.put("debug", debug);
+                  r.put("uid", uid);
+                  r.put("chipStatus", chipStatus);
+                  r.put("chipSats", chipSats);
+                  r.put("debug", dump);
                   notifyListeners("tagRead", r);
+                  Log.i(TAG, "EMIT uid="+uid+" status="+chipStatus+" sats="+chipSats);
               }
               private void resolveWriteError(PluginCall call, String code, String msg) {
-                  JSObject r = new JSObject();
-                  r.put("success", false); r.put("errorCode", code); r.put("errorMessage", msg);
-                  call.resolve(r);
+                  JSObject r=new JSObject(); r.put("success",false); r.put("errorCode",code); r.put("errorMessage",msg); call.resolve(r);
               }
               private void resolveReadError(PluginCall call, String code, String msg) {
-                  JSObject r = new JSObject();
-                  r.put("success", false); r.put("errorCode", code); r.put("errorMessage", msg);
-                  call.resolve(r);
+                  JSObject r=new JSObject(); r.put("success",false); r.put("errorCode",code); r.put("errorMessage",msg); call.resolve(r);
               }
           }
           JAVAEOF

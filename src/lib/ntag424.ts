@@ -6,12 +6,15 @@
  *             stopScan()                     → stops scanning
  *             writeStatus(uid, status, keys) → writes status string to NDEF file 2 on chip
  *             readStatus(uid)                → reads status string back from chip (verify)
- *   Events:   "tagRead" → { uid, tamperStatus, debug }
+ *   Events:   "tagRead" → { uid, chipStatus, chipSats, debug }
  *
- * Status values stored on chip (NDEF file 2, max 32 bytes plain text):
+ * Status values stored on chip (File 02, max 32 bytes plain text):
  *   "valid"               – Schein aufgeladen, einsatzbereit
  *   "invalid"             – Schein entwertet / ausgegeben
  *   "entwertenbeantragt"  – Entwertung beantragt, noch nicht vollzogen
+ *
+ * Sats stored on chip (File 03, 4-byte big-endian int):
+ *   The satoshi amount as registered on the chip at issuance time.
  */
 
 import { registerPlugin } from '@capacitor/core';
@@ -22,6 +25,7 @@ interface WriteStatusResult {
   success: boolean;
   errorCode?: string;
   errorMessage?: string;
+  dump?: string;
 }
 
 interface ReadStatusResult {
@@ -29,6 +33,7 @@ interface ReadStatusResult {
   status?: string;
   errorCode?: string;
   errorMessage?: string;
+  dump?: string;
 }
 
 interface Ntag424Plugin {
@@ -38,7 +43,7 @@ interface Ntag424Plugin {
   readStatus(options: { uid: string; appMasterKey: string; fileReadKey: string }): Promise<ReadStatusResult>;
   addListener(
     event: 'tagRead',
-    handler: (data: { uid: string; tamperStatus: string; debug: string }) => void
+    handler: (data: { uid: string; chipStatus: string; chipSats: number; debug: string }) => void
   ): Promise<{ remove: () => void }>;
   removeAllListeners(): Promise<void>;
 }
@@ -47,13 +52,15 @@ const Ntag424 = registerPlugin<Ntag424Plugin>('Ntag424');
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export type TamperStatus = 'CC' | 'OC' | 'OO' | 'II' | 'AUTH_REQUIRED' | 'UNKNOWN';
-export type ScanStatus   = 'idle' | 'scanning' | 'success' | 'error' | 'unsupported';
-export type ChipStatus   = 'valid' | 'invalid' | 'entwertenbeantragt';
+export type ScanStatus = 'idle' | 'scanning' | 'success' | 'error' | 'unsupported';
+export type ChipStatus = 'valid' | 'invalid' | 'entwertenbeantragt';
 
 export interface ScanResult {
   uid: string;
-  tamperStatus: TamperStatus;
+  /** Status direkt vom Chip gelesen (File 02) */
+  chipStatus: ChipStatus;
+  /** Sats direkt vom Chip gelesen (File 03), 0 wenn nicht geschrieben */
+  chipSats: number;
   timestamp: number;
   debug?: string;
 }
@@ -78,9 +85,16 @@ export async function startNativeScan(
   await stopNativeScan();
   try {
     listenerHandle = await Ntag424.addListener('tagRead', (data) => {
+      const rawStatus = (data.chipStatus ?? '').trim().toLowerCase();
+      const chipStatus: ChipStatus =
+        rawStatus === 'invalid' ? 'invalid' :
+        rawStatus === 'entwertenbeantragt' ? 'entwertenbeantragt' :
+        'valid';
+
       onResult({
         uid: data.uid,
-        tamperStatus: normalizeTamperStatus(data.tamperStatus),
+        chipStatus,
+        chipSats: typeof data.chipSats === 'number' ? data.chipSats : 0,
         timestamp: Date.now(),
         debug: data.debug,
       });
@@ -102,14 +116,13 @@ export async function stopNativeScan(): Promise<void> {
 // ─── Status schreiben / lesen ─────────────────────────────────────────────────
 
 /**
- * Schreibt den Status-String auf den Chip (NDEF File 2).
- * Keys werden aus dem keys/<UID>.json file geladen (32 Nullen = default).
+ * Schreibt den Status-String auf den Chip (File 02).
  */
 export async function writeChipStatus(
   uid: string,
   status: ChipStatus,
   keys: { appMasterKey: string; fileWriteKey: string },
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; dump?: string }> {
   try {
     const result = await Ntag424.writeStatus({
       uid,
@@ -118,21 +131,21 @@ export async function writeChipStatus(
       fileWriteKey: keys.fileWriteKey,
     });
     if (!result.success) {
-      return { success: false, error: result.errorMessage ?? result.errorCode ?? 'Unbekannter Fehler' };
+      return { success: false, error: result.errorMessage ?? result.errorCode ?? 'Unbekannter Fehler', dump: result.dump };
     }
-    return { success: true };
+    return { success: true, dump: result.dump };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
 /**
- * Liest den Status-String zurück vom Chip (Verifikation).
+ * Liest den Status-String zurück vom Chip (Verifikation nach Schreiben).
  */
 export async function readChipStatus(
   uid: string,
   keys: { appMasterKey: string; fileReadKey: string },
-): Promise<{ success: boolean; status?: ChipStatus; error?: string }> {
+): Promise<{ success: boolean; status?: ChipStatus; error?: string; dump?: string }> {
   try {
     const result = await Ntag424.readStatus({
       uid,
@@ -140,45 +153,15 @@ export async function readChipStatus(
       fileReadKey: keys.fileReadKey,
     });
     if (!result.success || !result.status) {
-      return { success: false, error: result.errorMessage ?? result.errorCode ?? 'Lesen fehlgeschlagen' };
+      return { success: false, error: result.errorMessage ?? result.errorCode ?? 'Lesen fehlgeschlagen', dump: result.dump };
     }
     const s = result.status.trim().toLowerCase();
     const status: ChipStatus =
       s === 'invalid' ? 'invalid' :
       s === 'entwertenbeantragt' ? 'entwertenbeantragt' :
       'valid';
-    return { success: true, status };
+    return { success: true, status, dump: result.dump };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function normalizeTamperStatus(raw: string): TamperStatus {
-  switch (raw) {
-    case 'CC':             return 'CC';
-    case 'OC':             return 'OC';
-    case 'OO':             return 'OO';
-    case 'II':             return 'II';
-    case 'AUTH_REQUIRED':  return 'AUTH_REQUIRED';
-    default:               return 'UNKNOWN';
-  }
-}
-
-export interface StatusDisplay {
-  label: string;
-  description: string;
-  color: 'green' | 'red' | 'yellow' | 'gray' | 'orange';
-}
-
-export function getStatusDisplay(status: TamperStatus): StatusDisplay {
-  switch (status) {
-    case 'CC': return { label: 'INTAKT',           description: 'Tamper-Draht unbeschädigt.',         color: 'green'  };
-    case 'OO': return { label: 'MANIPULIERT',      description: 'Tamper-Draht beschädigt!',            color: 'red'    };
-    case 'OC': return { label: 'EINMAL GEÖFFNET',  description: 'War beschädigt, jetzt wieder OK.',    color: 'yellow' };
-    case 'II': return { label: 'NICHT AKTIVIERT',  description: 'Tamper-Feature nicht konfiguriert.',  color: 'gray'   };
-    case 'AUTH_REQUIRED': return { label: 'AUTH ERFORDERLICH', description: 'Auth nötig.',             color: 'orange' };
-    default:   return { label: 'UNBEKANNT',        description: 'Status unbekannt.',                   color: 'gray'   };
   }
 }
