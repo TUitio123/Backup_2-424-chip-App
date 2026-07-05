@@ -4,9 +4,9 @@
  * Hoert auf Nostr Kind-3493-Events ("Zahlung bestaetigt", gesendet von der Website
  * nachdem eine LN-Invoice bezahlt wurde).
  *
- * Gibt den neuesten bestaetigten Payment-Event fuer eine UID zurueck.
- * KEIN Zeitlimit — die App gleicht IMMER mit der Website ab.
- * Wenn ein Kind-3493 existiert, darf die App den Chip auf "valid" setzen.
+ * Gibt den neuesten bestaetigten Payment-Event fuer eine UID zurueck,
+ * aber NUR wenn er NACH `since` erstellt wurde.
+ * `since` wird beim Start des Invoice-Panels gesetzt, damit alte Events ignoriert werden.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -22,15 +22,20 @@ export interface PaymentConfirmedEvent {
   pubkey: string;
 }
 
-export function usePaymentConfirmed(uid: string | null) {
+/**
+ * @param uid — Chip-UID oder null
+ * @param since — Unix-Timestamp: nur Events NACH diesem Zeitpunkt zaehlen
+ */
+export function usePaymentConfirmed(uid: string | null, since?: number) {
   const { nostr } = useNostr();
 
   return useQuery({
-    queryKey: ['payment-confirmed', uid],
+    queryKey: ['payment-confirmed', uid, since],
     enabled: !!uid,
     queryFn: async (c) => {
+      const sinceTs = since ?? Math.floor(Date.now() / 1000) - 300; // default: letzte 5 min
       const events = await nostr.query(
-        [{ kinds: [KIND_PAYMENT_CONFIRMED], '#t': [APP_TAG], limit: 50 }],
+        [{ kinds: [KIND_PAYMENT_CONFIRMED], '#t': [APP_TAG], since: sinceTs, limit: 50 }],
         { signal: c.signal },
       );
 
