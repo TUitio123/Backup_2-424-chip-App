@@ -2,11 +2,12 @@
 // Generates src/lib/chipRegistry.ts from chips.json
 // Run: node scripts/generate-registry.cjs
 
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 
 const chipsPath = path.join(__dirname, '..', 'chips.json');
 const outPath   = path.join(__dirname, '..', 'src', 'lib', 'chipRegistry.ts');
+const keysDir   = path.join(__dirname, '..', 'keys');
 
 const chips = JSON.parse(fs.readFileSync(chipsPath, 'utf8'));
 
@@ -16,22 +17,29 @@ function parseSats(label) {
   return match ? parseInt(match[1], 10) : 0;
 }
 
+// Valid status values
+const VALID_STATUSES = ['valid', 'invalid', 'entwertenbeantragt'];
+
 const entries = chips.map(c => {
   const uid      = (c.uid      || '').replace(/'/g, "\\'");
   const label    = (c.label    || '').replace(/'/g, "\\'");
   const sats     = c.sats !== undefined ? c.sats : parseSats(c.label || '');
+  const status   = VALID_STATUSES.includes(c.status) ? c.status : 'valid';
   const info     = (c.info     || '').replace(/'/g, "\\'");
   const issuedAt = (c.issuedAt || '').replace(/'/g, "\\'");
-  return `  {\n    uid: '${uid}',\n    label: '${label}',\n    sats: ${sats},\n    info: '${info}',\n    issuedAt: '${issuedAt}',\n  }`;
+  return `  {\n    uid: '${uid}',\n    label: '${label}',\n    sats: ${sats},\n    status: '${status}',\n    info: '${info}',\n    issuedAt: '${issuedAt}',\n  }`;
 }).join(',\n');
 
 const ts = `// AUTO-GENERATED from chips.json — do not edit manually
 // Run: node scripts/generate-registry.cjs
 
+export type ChipStatus = 'valid' | 'invalid' | 'entwertenbeantragt';
+
 export interface ChipEntry {
   uid: string;
   label: string;
   sats: number;
+  status: ChipStatus;
   info?: string;
   issuedAt?: string;
 }
@@ -58,10 +66,13 @@ export const KIND_RELOAD_REQUEST = 3491;
 /** Kind 3492 – Entwertungs-Anfrage (published by app on "Entwertung beantragen") */
 export const KIND_INVALIDATE_REQUEST = 3492;
 
+/** Kind 3493 – Zahlung bestätigt (published by website after LN invoice paid) */
+export const KIND_PAYMENT_CONFIRMED = 3493;
+
 /** Shared app-tag for relay-level filtering */
 export const APP_TAG = 'bitcoin-note-verifier';
 `;
 
 fs.writeFileSync(outPath, ts, 'utf8');
 console.log(`chipRegistry.ts generated with ${chips.length} chip(s):`);
-chips.forEach(c => console.log(`  - ${c.uid}  →  ${c.label}`));
+chips.forEach(c => console.log(`  - ${c.uid}  →  ${c.label}  [${c.status || 'valid'}]`));

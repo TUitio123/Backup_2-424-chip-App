@@ -1,0 +1,9 @@
+{
+  "uid": "04AD695ABF1D90",
+  "note": "Keys sind 32 Nullen = default/unset. Spaeter durch echte Keys ersetzen.",
+  "appMasterKey": "00000000000000000000000000000000",
+  "fileReadKey":  "00000000000000000000000000000000",
+  "fileWriteKey": "00000000000000000000000000000000",
+  "ndefReadKey":  "00000000000000000000000000000000",
+  "ndefWriteKey": "00000000000000000000000000000000"
+}
